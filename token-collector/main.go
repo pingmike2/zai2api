@@ -232,12 +232,12 @@ func tryCollect(ctx context.Context, total int, outPath string) error {
 	}
 
 	// Filter out empty or invalid tokens
-	// ⚠️ 真实阿里云 deviceToken 以 "SG_WEB#" 开头 (base64: U0dfV0VCIz...)
-	// 数据中心 IP / SDK 未就绪时 getToken() 返回垃圾值 — 必须按前缀+长度过滤
+	// ⚠️ getToken() 返回的是 base64 编码的阿里云 deviceToken, 解码后以 "SG_WEB#" 开头
+	// base64("SG_WEB#") = "U0dfV0VC" — 直接检查 base64 前缀 (勿用明文前缀, 会全部误拒!)
 	var validTokens []string
 	for _, tok := range tokens {
 		tok = strings.TrimSpace(tok)
-		if !strings.HasPrefix(tok, "SG_WEB#") {
+		if !strings.HasPrefix(tok, "U0dfV0VC") {
 			continue
 		}
 		if len(tok) < 30 {
