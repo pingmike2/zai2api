@@ -90,8 +90,12 @@ async function collect(browser, opts) {
   console.log('  Chat input found');
 
   // 触发验证码 SDK 加载
+  // ⚠️ 用 evaluate 直接触发 click — Playwright 原生 click 会被页面覆盖层拦截超时
   await page.fill('#chat-input', '__');
-  await page.click('#send-message-button');
+  await page.evaluate(() => {
+    const btn = document.querySelector('#send-message-button');
+    if (btn) btn.click();
+  });
   console.log('  Send clicked');
 
   // 等待 window.z_um.getToken 就绪

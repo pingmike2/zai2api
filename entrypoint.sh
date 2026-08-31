@@ -38,11 +38,7 @@ else
   echo "[entrypoint] 未配置 PROXY_URL, 直连"
 fi
 
-# 启动 Xvfb (chromedp 需要显示环境)
-echo "[entrypoint] 启动 Xvfb..."
-Xvfb :99 -screen 0 1280x900x24 &
-XVFB_PID=$!
-sleep 2
+# Playwright headless 不需要 Xvfb (省内存, 避免 OOM 杀 zai-server)
 export DISPLAY=:99
 
 # 采集一批 (代理失败自动回退直连)
@@ -88,10 +84,16 @@ else
   echo "[entrypoint] token 池充足, 跳过首次采集"
 fi
 
-# 启动主服务 (后台)
+# 启动主服务 (后台, 崩溃自动重启)
 echo "[entrypoint] 启动 zai-server (port=${PORT:-8080})..."
 echo "[entrypoint] ZAI_TOKEN: $([ -n "$ZAI_TOKEN" ] && echo '已配置(可解锁GLM-5.2)' || echo '未配置(仅glm-4.7)')"
-/app/zai-server &
+(
+  while true; do
+    /app/zai-server
+    echo "[entrypoint] ⚠️ zai-server 退出 (code=$?), 3s 后重启..."
+    sleep 3
+  done
+) &
 ZAI_PID=$!
 
 # 前台补采循环 (主循环, 稳定运行)
