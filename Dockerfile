@@ -22,16 +22,16 @@ RUN curl -sSL -o /tmp/gost.tar.gz \
     && mv /tmp/gost /out/gost \
     && chmod +x /out/gost
 
-# ============ Stage 2: 运行环境 (含 Chrome) ============
-FROM debian:bookworm-slim
+# ============ Stage 2: 运行环境 (含 Chrome + Node.js/Playwright) ============
+# node:20-bookworm-slim 自带 Node.js + npm (Playwright 采集器需要)
+FROM node:20-bookworm-slim
 
 ENV DEBIAN_FRONTEND=noninteractive
 ENV PYTHONUNBUFFERED=1
 
-# 安装 Chrome + Xvfb + 依赖 (chromedp 需要真实 Chrome)
+# 安装 Chrome + Xvfb + 依赖 (Playwright 需要真实 Chrome)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     chromium \
-    chromium-driver \
     xvfb \
     xauth \
     ca-certificates \
@@ -55,10 +55,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /app
 COPY --from=builder /out/zai-server /app/zai-server
-COPY --from=builder /out/token-collector /app/token-collector
 COPY --from=builder /out/gost /app/gost
+
+# Playwright 采集器 (node 依赖)
+COPY token-collector-js/ /app/token-collector-js/
+RUN cd /app/token-collector-js && npm install --omit=dev 2>&1 | tail -3
+
 COPY entrypoint.sh /app/entrypoint.sh
-RUN chmod +x /app/entrypoint.sh /app/zai-server /app/token-collector /app/gost
+RUN chmod +x /app/entrypoint.sh /app/zai-server /app/gost /app/token-collector-js/index.js
 
 # 默认环境变量 (可被 NF 覆盖)
 ENV PORT=8080

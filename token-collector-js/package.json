@@ -1,0 +1,11 @@
+{
+  "name": "token-collector-js",
+  "version": "1.0.0",
+  "private": true,
+  "dependencies": {
+    "playwright-core": "^1.49.0",
+    "playwright-extra": "^4.3.6",
+    "puppeteer-extra-plugin-stealth": "^2.11.2",
+    "better-sqlite3": "^11.5.0"
+  }
+}

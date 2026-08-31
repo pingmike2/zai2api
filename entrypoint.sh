@@ -57,13 +57,13 @@ collect_batch() {
   fi
   local result=1
   echo "[collect] ${label}: 采集 ${BATCH} 个 deviceToken..."
-  if DISPLAY=:99 /app/token-collector --count "$BATCH" --out "$DB" --headless=true 2>&1; then
+  if DISPLAY=:99 node /app/token-collector-js/index.js --count "$BATCH" --out "$DB" 2>&1; then
     echo "[collect] ✅ ${label} 采集完成: $(count_tokens) tokens"
     result=0
   elif [ -n "$ZAI_PROXY" ]; then
     echo "[collect] ⚠️ ${label}: 代理采集失败, 回退直连重试..."
     unset ZAI_PROXY HTTPS_PROXY HTTP_PROXY
-    if DISPLAY=:99 /app/token-collector --count "$BATCH" --out "$DB" --headless=true 2>&1; then
+    if DISPLAY=:99 node /app/token-collector-js/index.js --count "$BATCH" --out "$DB" 2>&1; then
       echo "[collect] ✅ ${label}: 直连采集完成: $(count_tokens) tokens"
       result=0
     else
