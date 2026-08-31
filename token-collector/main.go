@@ -86,6 +86,13 @@ func main() {
 	// Chrome allocator options
 	opts := append(chromedp.DefaultExecAllocatorOptions[:],
 		chromedp.Flag("headless", headless),
+		// ⚠️ stealth 反检测: 阿里云验证码 SDK 检测 headless/自动化标志会降级 token (格式对但验证必失败)
+		chromedp.Flag("disable-blink-features", "AutomationControlled"),
+		chromedp.Flag("disable-infobars", true),
+		chromedp.Flag("no-sandbox", true),
+		chromedp.Flag("disable-dev-shm-usage", true),
+		chromedp.Flag("start-maximized", true),
+		chromedp.UserAgent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"),
 	)
 	// 代理支持: 走低风险出口, 绕过数据中心 IP 风控
 	if proxy := os.Getenv("ZAI_PROXY"); proxy != "" {
@@ -98,6 +105,30 @@ func main() {
 
 	ctx, cancel := chromedp.NewContext(allocCtx)
 	defer cancel()
+
+	// ⚠️ stealth: 在每个新文档加载前注入反检测脚本
+	// 阿里云验证码 SDK 通过 navigator.webdriver / chrome 对象检测自动化浏览器
+	_ = chromedp.Run(ctx,
+		chromedp.ActionFunc(func(ctx context.Context) error {
+			_, err := page.AddScriptToEvaluateOnNewDocument(`
+				// 移除 webdriver 标志
+				Object.defineProperty(navigator, 'webdriver', {get: () => undefined});
+				// 伪装真实的 chrome 对象
+				window.chrome = {runtime: {}};
+				// 伪装 plugins / languages
+				Object.defineProperty(navigator, 'plugins', {get: () => [1,2,3,4,5]});
+				Object.defineProperty(navigator, 'languages', {get: () => ['zh-CN','zh','en-US','en']});
+				// 移除 headless 特征
+				const origQuery = window.navigator.permissions.query;
+				window.navigator.permissions.query = (parameters) => (
+					parameters.name === 'notifications' ?
+						Promise.resolve({state: Notification.permission}) :
+						origQuery(parameters)
+				);
+			`).Do(ctx)
+			return err
+		}),
+	)
 
 	// Listen for any JavaScript dialogs (like beforeunload) and automatically accept them
 	chromedp.ListenTarget(ctx, func(ev interface{}) {
