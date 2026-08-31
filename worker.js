@@ -201,7 +201,10 @@ async function computeCaptchaParam(deviceToken) {
   const resp = await aliyunRequest(CAPTCHA_VERIFY, params, { Referer: "" });
   const j = JSON.parse(resp);
   if (!j.Success || !j.Result || !j.Result.VerifyResult) throw new Error("captcha verify failed: " + resp.slice(0, 200));
-  const fp = JSON.stringify({ certifyId: j.Result.CertifyID, isSign: true, sceneId: CAPTCHA_SCENE, securityToken: j.Result.SecurityToken });
+  const ci = j.Result.certifyId;
+  const st = j.Result.securityToken;
+  if (!ci || !st) throw new Error("captcha OK but certifyId/securityToken empty");
+  const fp = JSON.stringify({ certifyId: ci, isSign: true, sceneId: CAPTCHA_SCENE, securityToken: st });
   return btoa(fp);
 }
 
