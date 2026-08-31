@@ -1,90 +1,79 @@
 # zai2api
 
-Z.AI (chat.z.ai) **匿名 GLM-4.7** 白嫖网关 — Cloudflare Worker 版。
+Z.AI (chat.z.ai) **GLM 白嫖网关** — 容器版 (Northflank/Docker)。
 
-逆向自 [D3-vin/GLM-ZAI-2API](https://github.com/D3-vin/GLM-ZAI-2API) (MIT, Go)，纯 HTTP 复刻，无需账号、无需 API key。
+基于 [D3-vin/GLM-ZAI-2API](https://github.com/D3-vin/GLM-ZAI-2API) (MIT, Go) 原版全功能移植，保留 dashboard / admin / tool-calling / 多模型支持。
 
-## 原理
+## 为什么是容器版
+
+Z.AI 的阿里云验证码 **deviceToken 与采集环境绑定**（同 IP 才有效）。容器内**同机采集 + 同机使用**，彻底解决跨环境 F001 问题。CF Worker 无法满足此要求，故放弃。
+
+## 功能
+
+- **OpenAI 兼容 API**：`/v1/chat/completions`（流式/非流式）、`/v1/models`、`/v1/messages`
+- **Tool calling**：函数调用（OpenCode / IDE 可用）
+- **Dashboard**：`/`（Web UI）、`/admin/stats`、`/admin/health`、`/status`
+- **模型**：
+  - guest（无 ZAI_TOKEN）：`glm-4.7` ✅
+  - 配置 `ZAI_TOKEN`（Z.AI 登录 JWT）：`GLM-5.2`、`GLM-5-Turbo`、`GLM-5v-Turbo`、`GLM-5.1` ✅
+- **自动采集 token 池**：启动时容器内采集 deviceToken（750 个/批），不足 50 自动补采
+
+## 镜像
+
+构建推送到 GHCR（workflow 自动）：
 
 ```
-┌─ 一次性采集 (需 Chrome) ─────────────────────────┐
-│ collect-tokens.mjs → 750 个 deviceToken → KV 池  │
-└──────────────────────────────────────────────────┘
-                    ↓
-┌─ Worker 每次请求 ────────────────────────────────┐
-│ GET /api/v1/auths/          → guest token (匿名)  │
-│ InitCaptchaV3+VerifyCaptchaV3 → captcha_param     │
-│ POST /api/v2/chat/completions → GLM-4.7 回复      │
-└──────────────────────────────────────────────────┘
+ghcr.io/pingmike2/zai2api:latest
 ```
 
-## 部署
+## Northflank 部署
+
+1. **新建 Service** → 从 GitHub 仓库构建（zai2api 已公开）或拉取 GHCR 镜像
+2. **环境变量**：
+
+| 变量 | 说明 | 默认 |
+|------|------|------|
+| `PORT` | 监听端口 | `8080` |
+| `AUTH_TOKEN` | 客户端鉴权 key（**必设**，对应请求 Bearer） | `d3vin` |
+| `ZAI_TOKEN` | Z.AI 登录 JWT（解锁 GLM-5.2，可选） | 空 |
+| `TOKEN_COUNT` | 启动采集 token 数 | `750` |
+| `LOG_LEVEL` | 日志级别 | `info` |
+
+3. **Volume**：挂载 `/data` 持久化 token 池（否则重启后重新采集）
+4. **端口**：暴露 `8080`
+5. **Health check**：`/healthz`
+
+## 本地运行
 
 ```bash
-npm i
-npx wrangler login
-
-# 1. 建 KV 命名空间
-npx wrangler kv namespace create ZAI_TOKENS
-# → 把输出的 id 填进 wrangler.toml
-
-# 2. 采集 deviceToken (需有 Chrome, 跑一次出 750 个)
-npx playwright install chromium
-node collect-tokens.mjs --count 750 --out tokens.json
-
-# 3. token 池灌进 KV
-npx wrangler kv bulk put --binding=ZAI_TOKENS tokens.json
-
-# 4. 部署
-npx wrangler deploy
+docker build -t zai2api .
+docker run -d -p 8080:8080 \
+  -e AUTH_TOKEN=your-key \
+  -v zai2api-data:/data \
+  zai2api
 ```
 
 ## 使用
 
 ```bash
 # 模型列表
-curl https://zai2api.<你的子域>.workers.dev/v1/models
-
-# chat (非流式)
-curl https://zai2api.<你的子域>.workers.dev/v1/chat/completions \
-  -H "Content-Type: application/json" \
-  -d '{"model":"glm-4.7","messages":[{"role":"user","content":"hi"}]}'
+curl http://localhost:8080/v1/models \
+  -H "Authorization: Bearer your-key"
 
 # chat (流式)
-curl -N https://zai2api.<你的子域>.workers.dev/v1/chat/completions \
-  -H "Content-Type: application/json" \
-  -d '{"model":"glm-4.7","messages":[{"role":"user","content":"hi"}],"stream":true}'
+curl -N http://localhost:8080/v1/chat/completions \
+  -H "Authorization: Bearer your-key" -H "Content-Type: application/json" \
+  -d '{"model":"glm-4.7","messages":[{"role":"user","content":"hi"}]}'
+
+# 状态
+curl http://localhost:8080/status
+curl http://localhost:8080/healthz
 ```
 
-### Hermes 接入
+## 关于 GLM-5.2 无限用
 
-```bash
-hermes config set providers.zai base_url "https://zai2api.<你的子域>.workers.dev/v1"
-hermes config set providers.zai model "glm-4.7"
-hermes config set providers.zai key_env HERMES_CUSTOM_ZAI_API_KEY
-# 不设客户端 key 时任意值即可 (如 "sk-none")
-```
-
-## 模型
-
-| 模型 | guest 匿名 | 需 ZAI_TOKEN |
-|------|:---:|:---:|
-| `glm-4.7` | ✅ | — |
-| `GLM-5-Turbo` | ❌ | ✅ |
-| `GLM-5v-Turbo` | ❌ | ✅ |
-| `GLM-5.1` | ❌ | ✅ |
-| `glm-5.2` | ❌ | 有时 |
-
-## 关键点 / 坑
-
-- **deviceToken 一次性**：每次 chat 消耗一个 token（源码里 `tokenStore.remove`），750 个 ≈ 750 次请求。采完可再跑 collect-tokens.mjs 补充。
-- **guest 会话纯 HTTP**：`GET /api/v1/auths/` 匿名返回 token+id，已验证可用。
-- **captcha 纯 HTTP**：阿里云 InitCaptchaV3/VerifyCaptchaV3，HMAC-SHA1 签名，密钥对硬编码在逆向源码（非私密，公开）。
-- **RC4-like 加密**：generateArg/encrypt 用自定义 64 位置换表 + 流密码，已复刻。
-- **zlib 兼容**：Worker 用 CompressionStream('deflate') 生成 raw deflate，再手动包 zlib 头(0x78 0x9C)+adler32 尾，与 Go zlib.Writer 输出一致。
-- **x-fe-Version**：硬编码 `prod-fe-1.1.92`（从 Z.AI 首页抓取，版本更新可能需调整）。
-- **HMAC 签名**：`wKey = HMAC-SHA256(saltKey, bucket)`，`signature = HMAC-SHA256(wKey_hex, "requestId,..,timestamp,..,user_id,..|b64(prompt)|ts")`。
+配置 `ZAI_TOKEN`（chat.z.ai 登录后的 JWT）后 GLM-5.2 可用。是否"无限"取决于 Z.AI 账户额度——guest 无限制但只有 glm-4.7；带 token 的模型受 Z.AI 侧限流影响，实测为准。
 
 ## 免责
 
-逆向自公开 MIT 项目，仅用于个人学习/测试。遵守 Z.AI 服务条款，控制请求频率，勿商用。
+逆向自公开 MIT 项目，仅用于个人学习/测试。遵守 Z.AI 服务条款，控制请求频率。

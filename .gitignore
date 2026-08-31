@@ -1,5 +1,6 @@
 node_modules/
 .wrangler/
 .dev.vars/
-tokens.json
-*.sqlite
+tokens.sqlite
+.env
+*.png
