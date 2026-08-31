@@ -257,16 +257,18 @@ async function chatWithZAI(prompt, model, deviceToken, history = []) {
   return { res, token, userId };
 }
 
-// ============ KV deviceToken 池 ============
+// ============ D1 deviceToken 池 ============
+// D1 (SQLite) 免费档 500万读/天, 远大于 KV 的 1000次/天
+// 表: tokens(id INTEGER PRIMARY KEY AUTOINCREMENT, token TEXT NOT NULL, created_at TEXT DEFAULT (datetime('now')))
 async function takeDeviceToken(env) {
-  const kv = env.ZAI_TOKENS;
-  if (!kv) throw new Error("ZAI_TOKENS KV 未绑定");
-  const list = await kv.list({ limit: 100 });
-  if (!list.keys.length) throw new Error("deviceToken 池空 — 先跑 collect-tokens.mjs 采集");
-  const k = list.keys[0].name;
-  const tok = await kv.get(k);
-  await kv.delete(k);
-  return tok;
+  const db = env.ZAI_TOKENS;
+  if (!db) throw new Error("ZAI_TOKENS D1 未绑定");
+  // 取最早的一个 token, 原子删除 (避免并发重复取)
+  const res = await db.prepare("SELECT id, token FROM tokens ORDER BY id LIMIT 1").all();
+  if (!res.results || !res.results.length) throw new Error("deviceToken 池空 — 先跑 collect-tokens.mjs 采集");
+  const { id, token } = res.results[0];
+  await db.prepare("DELETE FROM tokens WHERE id = ?").bind(id).run();
+  return token;
 }
 
 // ============ HTTP 服务 ============
@@ -362,8 +364,8 @@ export default {
 
     if (p === "/healthz" || p === "/") {
       let tokens = 0;
-      try { const l = await env.ZAI_TOKENS.list({ limit: 1 }); tokens = l.keys.length ? 1 : 0; } catch {}
-      return json({ ok: true, service: "zai2api", has_tokens: !!tokens, model: DEFAULT_MODEL });
+      try { const r = await env.ZAI_TOKENS.prepare("SELECT count(*) as c FROM tokens").first(); tokens = r ? r.c : 0; } catch {}
+      return json({ ok: true, service: "zai2api", has_tokens: tokens > 0, token_count: tokens, model: DEFAULT_MODEL });
     }
     if (p === "/v1/models") {
       return json({ object: "list", data: MODELS.map(m => ({ id: m.id, object: "model", owned_by: "z-ai", free: m.free })) });

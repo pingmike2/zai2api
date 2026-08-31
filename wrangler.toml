@@ -2,10 +2,11 @@ name = "zai2api"
 main = "worker.js"
 compatibility_date = "2026-08-01"
 
-# deviceToken 池 (采集后 bulk put)
-[[kv_namespaces]]
+# deviceToken 池 (采集后 d1 execute 导入)
+[[d1_databases]]
 binding = "ZAI_TOKENS"
-id = "3ab3591419784c808d547316919c973f"
+database_name = "zai-tokens"
+database_id = "d701172a-0987-40c7-8b19-360c166d5361"
 
 [vars]
 # 客户端访问鉴权 (可选; 不设默认放行, 公网慎用)
