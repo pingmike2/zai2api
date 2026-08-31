@@ -948,6 +948,27 @@ func main() {
 		tokens:        tokenStore,
 	}
 
+	// 后台轮询: 首次采集后台运行, token 库可能延迟 ~4 分钟才出现
+	// 服务启动时不阻塞, 库出现后自动加载
+	go func() {
+		ticker := time.NewTicker(5 * time.Second)
+		defer ticker.Stop()
+		for range ticker.C {
+			if srv.tokens != nil {
+				return
+			}
+			ts, err := OpenTokenStore(cfg.DBPath)
+			if err != nil {
+				continue
+			}
+			srv.tokens = ts
+			if n := ts.Count(); n > 0 {
+				log.Printf("[TokenStore] Token database ready: %s (%d tokens)", cfg.DBPath, n)
+			}
+			return
+		}
+	}()
+
 	// Startup banner
 	printBanner()
 	fmt.Printf(`
