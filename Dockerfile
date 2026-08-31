@@ -51,6 +51,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libasound2 \
     libpangocairo-1.0-0 \
     sqlite3 \
+    build-essential \
+    python3 \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
@@ -59,7 +61,8 @@ COPY --from=builder /out/gost /app/gost
 
 # Playwright 采集器 (node 依赖)
 COPY token-collector-js/ /app/token-collector-js/
-RUN cd /app/token-collector-js && npm install --omit=dev 2>&1 | tail -3
+RUN cd /app/token-collector-js && npm install --omit=dev 2>&1 | tail -3 \
+    && npm rebuild better-sqlite3 --build-from-source 2>&1 | tail -2
 
 COPY entrypoint.sh /app/entrypoint.sh
 RUN chmod +x /app/entrypoint.sh /app/zai-server /app/gost /app/token-collector-js/index.js
