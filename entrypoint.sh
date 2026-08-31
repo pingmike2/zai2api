@@ -16,6 +16,17 @@ count_tokens() {
   sqlite3 "$DB" "SELECT COUNT(*) FROM tokens;" 2>/dev/null || echo 0
 }
 
+# 代理支持: PROXY_URL 同时作用于采集 (ZAI_PROXY) 和服务 (HTTPS_PROXY)
+# 采集与请求走同一出口 IP → token 才有效
+if [ -n "$PROXY_URL" ]; then
+  export ZAI_PROXY="$PROXY_URL"
+  export HTTPS_PROXY="$PROXY_URL"
+  export HTTP_PROXY="$PROXY_URL"
+  echo "[entrypoint] 已启用代理: $PROXY_URL"
+else
+  echo "[entrypoint] 未配置 PROXY_URL, 直连 (数据中心 IP 可能被风控)"
+fi
+
 # 启动 Xvfb (chromedp 需要显示环境)
 echo "[entrypoint] 启动 Xvfb..."
 Xvfb :99 -screen 0 1280x900x24 &

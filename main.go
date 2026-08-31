@@ -69,6 +69,7 @@ func envIntOr(key string, def int) int {
 
 var httpClient = &http.Client{
 	Transport: &http.Transport{
+		Proxy:               http.ProxyFromEnvironment, // 支持 HTTP(S)_PROXY 环境变量
 		MaxIdleConns:        100,
 		MaxIdleConnsPerHost: 20,
 		MaxConnsPerHost:     20,

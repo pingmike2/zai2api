@@ -87,6 +87,11 @@ func main() {
 	opts := append(chromedp.DefaultExecAllocatorOptions[:],
 		chromedp.Flag("headless", headless),
 	)
+	// 代理支持: 走低风险出口, 绕过数据中心 IP 风控
+	if proxy := os.Getenv("ZAI_PROXY"); proxy != "" {
+		fmt.Printf("  Using proxy: %s\n", proxy)
+		opts = append(opts, chromedp.ProxyServer(proxy))
+	}
 
 	allocCtx, cancel := chromedp.NewExecAllocator(context.Background(), opts...)
 	defer cancel()
