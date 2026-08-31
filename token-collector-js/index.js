@@ -99,11 +99,14 @@ async function collect(browser, opts) {
   console.log('  Send clicked');
 
   // 等待 window.z_um.getToken 就绪
+  // ⚠️ Playwright Node 签名是 waitForFunction(fn, arg, options)：
+  // options 必须作为第三个参数传入，否则默认超时是 30s 而不是预期的 90s。
   console.log('  Waiting for token endpoint...');
   try {
     await page.waitForFunction(
       () => typeof window.z_um !== 'undefined' && typeof window.z_um.getToken === 'function',
-      { timeout: 90000 }
+      null,
+      { timeout: 90000, polling: 100 }
     );
   } catch (e) {
     throw new Error('token endpoint not ready: ' + e.message);
