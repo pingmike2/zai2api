@@ -1,0 +1,81 @@
+name: 🪙 采集 Z.AI deviceToken + 部署
+
+on:
+  workflow_dispatch:
+    inputs:
+      count:
+        description: 采集 deviceToken 数量 (每 token 用一次)
+        required: false
+        default: "750"
+      deploy:
+        description: 采集后是否部署 Worker
+        required: false
+        type: boolean
+        default: true
+
+permissions:
+  contents: write
+
+jobs:
+  collect-and-deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: 安装依赖 + Chromium
+        run: |
+          npm install
+          npx playwright install --with-deps chromium
+
+      - name: 配置 wrangler 凭证
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          [ -n "$CLOUDFLARE_API_TOKEN" ] || { echo "❌ 缺 secrets.CLOUDFLARE_API_TOKEN"; exit 1; }
+          [ -n "$CLOUDFLARE_ACCOUNT_ID" ] || { echo "❌ 缺 secrets.CLOUDFLARE_ACCOUNT_ID"; exit 1; }
+          # wrangler 从 env 读凭证 (GitHub Actions 环境)
+
+      - name: 确保 KV 命名空间存在
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          if grep -q "REPLACE_WITH_KV_NAMESPACE_ID" wrangler.toml; then
+            echo "创建 KV 命名空间 ZAI_TOKENS..."
+            OUT=$(npx wrangler kv namespace create ZAI_TOKENS 2>&1 || true)
+            echo "$OUT"
+            ID=$(echo "$OUT" | grep -oP 'id\s*=\s*"\K[^"]+' | head -1)
+            [ -n "$ID" ] || { echo "❌ 无法从输出解析 KV id"; echo "$OUT"; exit 1; }
+            sed -i "s/REPLACE_WITH_KV_NAMESPACE_ID/$ID/" wrangler.toml
+            echo "✅ KV id = $ID, 已写入 wrangler.toml"
+          else
+            echo "KV id 已配置, 复用现有命名空间"
+          fi
+
+      - name: 采集 deviceToken
+        run: |
+          node collect-tokens.mjs --count ${{ inputs.count || '750' }} --out tokens.json
+
+      - name: token 池灌进 KV
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          if [ ! -s tokens.json ]; then echo "❌ tokens.json 为空"; exit 1; fi
+          echo "待写入 KV keys: $(python3 -c 'import json;print(len(json.load(open("tokens.json"))))')"
+          npx wrangler kv bulk put --binding=ZAI_TOKENS tokens.json
+          echo "✅ KV 灌池完成"
+
+      - name: 部署 Worker
+        if: ${{ inputs.deploy }}
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          npx wrangler deploy
