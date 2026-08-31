@@ -20,12 +20,20 @@ count_tokens() {
   sqlite3 "$DB" "SELECT COUNT(*) FROM tokens;" 2>/dev/null || echo 0
 }
 
-# 代理支持: PROXY_URL 同时作用于采集 (ZAI_PROXY) 和服务 (HTTPS_PROXY)
+# 代理支持: PROXY_URL (带认证 socks5/http) → gost 本地中转 127.0.0.1:1080 无认证
+# Chrome/Go 都连本地端口; 采集与请求走同一出口 IP → token 有效
+mask_proxy() {
+  # 打码密码: socks5://user:***@host:port
+  echo "$PROXY_URL" | sed -E 's#(//[^:]+:)[^@]+(@)#\1***\2#'
+}
 if [ -n "$PROXY_URL" ]; then
-  export ZAI_PROXY="$PROXY_URL"
-  export HTTPS_PROXY="$PROXY_URL"
-  export HTTP_PROXY="$PROXY_URL"
-  echo "[entrypoint] 已启用代理: $PROXY_URL"
+  echo "[entrypoint] 启动 gost 本地中转 (监听 127.0.0.1:1080, 上游: $(mask_proxy))..."
+  /app/gost -L "socks5://127.0.0.1:1080" -F "$PROXY_URL" >/tmp/gost.log 2>&1 &
+  GOST_PID=$!
+  sleep 2
+  export ZAI_PROXY="socks5://127.0.0.1:1080"
+  export HTTPS_PROXY="socks5://127.0.0.1:1080"
+  export HTTP_PROXY="socks5://127.0.0.1:1080"
 else
   echo "[entrypoint] 未配置 PROXY_URL, 直连"
 fi

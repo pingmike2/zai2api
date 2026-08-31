@@ -14,6 +14,14 @@ COPY token-collector/ ./token-collector/
 RUN CGO_ENABLED=0 go build -ldflags="-s -w" -o /out/zai-server .
 RUN cd token-collector && CGO_ENABLED=0 go build -ldflags="-s -w" -o /out/token-collector .
 
+# 下载 gost (本地 socks5 中转: 解决 Chrome 不支持带认证 socks5)
+# 把远程带认证 PROXY_URL 转成 127.0.0.1:1080 无认证端口
+RUN curl -sSL -o /tmp/gost.tar.gz \
+    https://github.com/go-gost/gost/releases/download/v3.3.0/gost_3.3.0_linux_amd64.tar.gz \
+    && tar xzf /tmp/gost.tar.gz -C /tmp \
+    && mv /tmp/gost /out/gost \
+    && chmod +x /out/gost
+
 # ============ Stage 2: 运行环境 (含 Chrome) ============
 FROM debian:bookworm-slim
 
@@ -48,8 +56,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 WORKDIR /app
 COPY --from=builder /out/zai-server /app/zai-server
 COPY --from=builder /out/token-collector /app/token-collector
+COPY --from=builder /out/gost /app/gost
 COPY entrypoint.sh /app/entrypoint.sh
-RUN chmod +x /app/entrypoint.sh /app/zai-server /app/token-collector
+RUN chmod +x /app/entrypoint.sh /app/zai-server /app/token-collector /app/gost
 
 # 默认环境变量 (可被 NF 覆盖)
 ENV PORT=8080
