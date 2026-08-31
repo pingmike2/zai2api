@@ -232,12 +232,18 @@ func tryCollect(ctx context.Context, total int, outPath string) error {
 	}
 
 	// Filter out empty or invalid tokens
+	// ⚠️ 真实阿里云 deviceToken 以 "SG_WEB#" 开头 (base64: U0dfV0VCIz...)
+	// 数据中心 IP / SDK 未就绪时 getToken() 返回垃圾值 — 必须按前缀+长度过滤
 	var validTokens []string
 	for _, tok := range tokens {
 		tok = strings.TrimSpace(tok)
-		if tok != "" && tok != "null" && tok != "undefined" {
-			validTokens = append(validTokens, tok)
+		if !strings.HasPrefix(tok, "SG_WEB#") {
+			continue
 		}
+		if len(tok) < 30 {
+			continue // 真 token 远长于此; 短 token 无效
+		}
+		validTokens = append(validTokens, tok)
 	}
 
 	if len(validTokens) == 0 {
@@ -285,18 +291,16 @@ func waitForZUM(ctx context.Context) error {
 	}
 }
 
-// saveTokens creates a SQLite database with the collected tokens.
+// saveTokens appends tokens to the SQLite database.
+// ⚠️ 不要 os.Remove 重建 — zai-server 持有打开句柄, 删除重建会导致 readonly database (1032)
 func saveTokens(path string, tokens []string) error {
-	// Remove existing file to start fresh
-	os.Remove(path)
-
 	db, err := sql.Open("sqlite", path)
 	if err != nil {
 		return err
 	}
 	defer db.Close()
 
-	if _, err := db.Exec("CREATE TABLE tokens (id INTEGER PRIMARY KEY, token TEXT);"); err != nil {
+	if _, err := db.Exec("CREATE TABLE IF NOT EXISTS tokens (id INTEGER PRIMARY KEY AUTOINCREMENT, token TEXT UNIQUE);"); err != nil {
 		return err
 	}
 
@@ -305,15 +309,15 @@ func saveTokens(path string, tokens []string) error {
 		return err
 	}
 
-	stmt, err := tx.Prepare("INSERT INTO tokens (id, token) VALUES (?, ?);")
+	stmt, err := tx.Prepare("INSERT OR IGNORE INTO tokens (token) VALUES (?);")
 	if err != nil {
 		tx.Rollback()
 		return err
 	}
 	defer stmt.Close()
 
-	for i, tok := range tokens {
-		if _, err := stmt.Exec(i, tok); err != nil {
+	for _, tok := range tokens {
+		if _, err := stmt.Exec(tok); err != nil {
 			tx.Rollback()
 			return err
 		}
