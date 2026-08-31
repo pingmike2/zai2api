@@ -471,7 +471,7 @@ type sendOpts struct {
 // content delta received from the SSE stream.
 func (s *Server) sendToZAI(ctx context.Context, prompt string, opts sendOpts, onChunk func(string)) error {
 	if !s.zaiSession.isInitialized() {
-		if err := s.zaiSession.initialize(s.cfg.ZAIToken); err != nil {
+		if err := s.zaiSession.initialize(nextZaiToken()); err != nil {
 			return err
 		}
 	}
@@ -479,9 +479,12 @@ func (s *Server) sendToZAI(ctx context.Context, prompt string, opts sendOpts, on
 	for retry := 0; retry < 2; retry++ {
 		err := s.doZAIRequest(ctx, prompt, opts, onChunk)
 		if err == errZAIUnauthorized && retry == 0 {
-			log.Println("[ZAI] 401, re-initializing session...")
+			log.Println("[ZAI] 401, rotating token and re-initializing session...")
+			if s.zaiSession.currentToken() != "" {
+				markZaiTokenFailed(s.zaiSession.currentToken())
+			}
 			s.zaiSession.markUninitialized()
-			if initErr := s.zaiSession.initialize(s.cfg.ZAIToken); initErr != nil {
+			if initErr := s.zaiSession.initialize(nextZaiToken()); initErr != nil {
 				return initErr
 			}
 			continue
@@ -716,6 +719,71 @@ func (s *ZaiSession) markUninitialized() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.initialized = false
+}
+
+// currentToken returns the session's active JWT ("" in guest mode).
+func (s *ZaiSession) currentToken() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.token
+}
+
+// ── Token pool (multi-account rotation) ──
+// ZAI_TOKENS (comma-separated) enables round-robin rotation: on 401 the failed
+// token is marked dead and the next one is used. Falls back to ZAI_TOKEN single.
+
+var zaiTokenPool struct {
+	mu     sync.Mutex
+	all    []string
+	dead   map[string]bool
+	cursor int
+}
+
+func initTokenPool(primary string) {
+	zaiTokenPool.mu.Lock()
+	defer zaiTokenPool.mu.Unlock()
+	zaiTokenPool.dead = make(map[string]bool)
+	zaiTokenPool.cursor = 0
+	zaiTokenPool.all = nil
+	for _, t := range strings.Split(primary, ",") {
+		trimmed := strings.TrimSpace(t)
+		if trimmed != "" {
+			zaiTokenPool.all = append(zaiTokenPool.all, trimmed)
+		}
+	}
+}
+
+// nextZaiToken returns the next live token from the pool, or "" when the pool
+// is empty (guest mode). Tokens marked dead are skipped; if all are dead the
+// cursor resets so a fresh cycle gets one more chance.
+func nextZaiToken() string {
+	zaiTokenPool.mu.Lock()
+	defer zaiTokenPool.mu.Unlock()
+	if len(zaiTokenPool.all) == 0 {
+		return ""
+	}
+	for i := 0; i < len(zaiTokenPool.all); i++ {
+		token := zaiTokenPool.all[zaiTokenPool.cursor%len(zaiTokenPool.all)]
+		zaiTokenPool.cursor++
+		if !zaiTokenPool.dead[token] {
+			return token
+		}
+	}
+	for key := range zaiTokenPool.dead {
+		delete(zaiTokenPool.dead, key)
+	}
+	zaiTokenPool.cursor = 0
+	return zaiTokenPool.all[0]
+}
+
+func markZaiTokenFailed(token string) {
+	zaiTokenPool.mu.Lock()
+	defer zaiTokenPool.mu.Unlock()
+	if token != "" && len(zaiTokenPool.all) > 1 {
+		zaiTokenPool.dead[token] = true
+		log.Printf("[Session] Token %.8s... marked failed; %d of %d remain",
+			token, len(zaiTokenPool.all)-len(zaiTokenPool.dead), len(zaiTokenPool.all))
+	}
 }
 
 func (s *ZaiSession) snapshot() (connected, userName, userID, feVersion string, features Features, init bool) {
