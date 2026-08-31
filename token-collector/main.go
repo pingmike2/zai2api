@@ -183,26 +183,18 @@ func tryCollect(ctx context.Context, total int, outPath string) error {
 
 	t0 := time.Now()
 
-	// 并行采集 — 每批并发 batchSize 个 getToken(), 单次超时 perCallTimeout 跳过
-	// (顺序采集在 NF 慢网络上每个 token ~1s+, 300 个会超时; 并行快 15 倍)
+	// ⚠️ 顺序采集 — 15 并发的 Promise.all 会把页面 JS 主线程卡死 (SDK 每次调用占用主线程,
+	// 并发后 event loop 阻塞, 连 setTimeout 超时都不触发 → 挂到 tokenCollectTimeout 超时)
+	// 顺序采集: 每个 ~0.9-1.3s, 150 个 ≈ 150-200s, 在 300s 超时内可靠完成
 	jsExpr := fmt.Sprintf(`(async () => {
 		const total = %d;
-		const batchSize = 15;
-		const perCallTimeout = 8000;
 		const out = new Array(total);
-		const withTimeout = (p) => Promise.race([
-			Promise.resolve(p),
-			new Promise(r => setTimeout(() => r(null), perCallTimeout))
-		]);
-		for (let i = 0; i < total; i += batchSize) {
-			const n = Math.min(batchSize, total - i);
-			const batch = [];
-			for (let k = 0; k < n; k++) {
-				batch.push(withTimeout(window.z_um.getToken()));
+		for (let i = 0; i < total; i++) {
+			try {
+				out[i] = await window.z_um.getToken();
+			} catch (e) {
+				out[i] = null;
 			}
-			const results = await Promise.all(batch);
-			for (let k = 0; k < n; k++) out[i + k] = results[k];
-			await new Promise(r => setTimeout(r, 0));
 		}
 		return out;
 	})()`, total)
