@@ -38,8 +38,8 @@ else
   echo "[entrypoint] 未配置 PROXY_URL, 直连"
 fi
 
-# Playwright headless 不需要 Xvfb (省内存, 避免 OOM 杀 zai-server)
-export DISPLAY=:99
+# Playwright headless 不需要 Xvfb，也不要设置 DISPLAY；否则 Chromium 会尝试连接不存在的 X server。
+unset DISPLAY
 
 # 采集一批 (代理失败自动回退直连)
 # ⚠️ flock 原子锁防并发: 首次采集(后台) 和 补采循环 同时触发时只有一个能跑
@@ -53,13 +53,13 @@ collect_batch() {
   fi
   local result=1
   echo "[collect] ${label}: 采集 ${BATCH} 个 deviceToken..."
-  if DISPLAY=:99 node /app/token-collector-js/index.js --count "$BATCH" --out "$DB" 2>&1; then
+  if node /app/token-collector-js/index.js --count "$BATCH" --out "$DB" 2>&1; then
     echo "[collect] ✅ ${label} 采集完成: $(count_tokens) tokens"
     result=0
   elif [ -n "$ZAI_PROXY" ]; then
     echo "[collect] ⚠️ ${label}: 代理采集失败, 回退直连重试..."
     unset ZAI_PROXY HTTPS_PROXY HTTP_PROXY
-    if DISPLAY=:99 node /app/token-collector-js/index.js --count "$BATCH" --out "$DB" 2>&1; then
+    if node /app/token-collector-js/index.js --count "$BATCH" --out "$DB" 2>&1; then
       echo "[collect] ✅ ${label}: 直连采集完成: $(count_tokens) tokens"
       result=0
     else
