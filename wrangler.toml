@@ -1,0 +1,14 @@
+name = "zai2api"
+main = "worker.js"
+compatibility_date = "2026-08-01"
+
+# deviceToken 池 (采集后 bulk put)
+# npx wrangler kv namespace create ZAI_TOKENS
+# npx wrangler kv bulk put --binding=ZAI_TOKENS tokens.json
+[[kv_namespaces]]
+binding = "ZAI_TOKENS"
+id = "REPLACE_WITH_KV_NAMESPACE_ID"
+
+[vars]
+# 客户端访问鉴权 (可选; 不设默认放行, 公网慎用)
+# ZAI_AUTH_KEY = "your-client-key"

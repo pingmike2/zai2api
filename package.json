@@ -1,0 +1,14 @@
+{
+  "name": "zai2api",
+  "version": "1.0.0",
+  "description": "Z.AI (chat.z.ai) 匿名 GLM-4.7 白嫖网关 — Cloudflare Worker",
+  "main": "worker.js",
+  "scripts": {
+    "deploy": "wrangler deploy",
+    "collect": "node collect-tokens.mjs"
+  },
+  "devDependencies": {
+    "wrangler": "^4.0.0",
+    "playwright": "^1.50.0"
+  }
+}
