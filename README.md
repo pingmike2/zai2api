@@ -36,7 +36,9 @@ ghcr.io/pingmike2/zai2api:latest
 | `PORT` | 监听端口 | `8080` |
 | `AUTH_TOKEN` | 客户端鉴权 key（**必设**，对应请求 Bearer） | `d3vin` |
 | `ZAI_TOKEN` | Z.AI 登录 JWT（解锁 GLM-5.2，可选） | 空 |
-| `TOKEN_COUNT` | 启动采集 token 数 | `750` |
+| `TOKEN_BATCH` | 每批采集 token 数（服务先上线） | `150` |
+| `TOKEN_TARGET` | token 池目标值（达标后停止补采） | `750` |
+| `TOKEN_LOWWATER` | 低水位（消耗到此时补采） | `50` |
 | `LOG_LEVEL` | 日志级别 | `info` |
 
 3. **Volume**：挂载 `/data` 持久化 token 池（否则重启后重新采集）
