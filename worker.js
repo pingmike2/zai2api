@@ -140,14 +140,15 @@ function aliHash(inputStr, saltStr) {
 // ============ 阿里云验证码 ============
 async function aliyunSignature(params, secKey) {
   const keys = Object.keys(params).sort();
-  const canonical = keys.map(k => urlEnc(k) + "=" + urlEnc(params[k])).join("&");
-  const stringToSign = "POST&" + urlEnc("/") + "&" + urlEnc(canonical);
+  // ⚠️ 用 urlEncode (整串编码), 不能用 urlEnc (单字符) — Go 源码是 urlEncode(canonical)
+  const canonical = keys.map(k => urlEncode(k) + "=" + urlEncode(params[k])).join("&");
+  const stringToSign = "POST&" + urlEncode("/") + "&" + urlEncode(canonical);
   return hmacSha1B64(secKey + "&", stringToSign);
 }
 
 async function aliyunRequest(url, params, extraHeaders = {}) {
   params.Signature = await aliyunSignature(params, CAPTCHA_SK);
-  const body = Object.keys(params).sort().map(k => urlEnc(k) + "=" + urlEnc(params[k])).join("&");
+  const body = Object.keys(params).sort().map(k => urlEncode(k) + "=" + urlEncode(params[k])).join("&");
   const res = await fetch(url, {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8", "User-Agent": UA, ...extraHeaders },
