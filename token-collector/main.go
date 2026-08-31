@@ -36,7 +36,7 @@ const (
 	maxTokens           = 1250
 	defaultTokens       = 750
 	maxRetries          = 5
-	tokenCollectTimeout = 300 * time.Second
+	tokenCollectTimeout = 360 * time.Second
 	zaiURL              = "https://chat.z.ai"
 )
 
@@ -183,15 +183,20 @@ func tryCollect(ctx context.Context, total int, outPath string) error {
 
 	t0 := time.Now()
 
-	// ⚠️ 顺序采集 — 15 并发的 Promise.all 会把页面 JS 主线程卡死 (SDK 每次调用占用主线程,
-	// 并发后 event loop 阻塞, 连 setTimeout 超时都不触发 → 挂到 tokenCollectTimeout 超时)
-	// 顺序采集: 每个 ~0.9-1.3s, 150 个 ≈ 150-200s, 在 300s 超时内可靠完成
+	// ⚠️ 顺序采集 + 单次超时: 15 并发的 Promise.all 会卡死页面 JS 主线程;
+	// 纯顺序无超时的话, 单个 getToken() 挂住不 resolve 会拖到整体 300s 超时。
+	// 方案: 顺序 await + Promise.race 给每次调用 10s 上限, 挂住的跳过不拖垮整批。
 	jsExpr := fmt.Sprintf(`(async () => {
 		const total = %d;
+		const perCallTimeout = 10000;
+		const withTimeout = (p) => Promise.race([
+			Promise.resolve(p),
+			new Promise(r => setTimeout(() => r(null), perCallTimeout))
+		]);
 		const out = new Array(total);
 		for (let i = 0; i < total; i++) {
 			try {
-				out[i] = await window.z_um.getToken();
+				out[i] = await withTimeout(window.z_um.getToken());
 			} catch (e) {
 				out[i] = null;
 			}
