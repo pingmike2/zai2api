@@ -21,7 +21,8 @@ func OpenTokenStore(dbPath string) (*TokenStore, error) {
 	if _, err := os.Stat(dbPath); err != nil {
 		return nil, fmt.Errorf("token database not found: %s", dbPath)
 	}
-	db, err := sql.Open("sqlite", dbPath)
+	dsn := "file:" + dbPath + "?_pragma=busy_timeout(10000)&_pragma=journal_mode(WAL)"
+	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return nil, err
 	}

@@ -293,8 +293,10 @@ func waitForZUM(ctx context.Context) error {
 
 // saveTokens appends tokens to the SQLite database.
 // ⚠️ 不要 os.Remove 重建 — zai-server 持有打开句柄, 删除重建会导致 readonly database (1032)
+// busy_timeout: 多进程(collector+server)写同一库时避免 SQLITE_BUSY
 func saveTokens(path string, tokens []string) error {
-	db, err := sql.Open("sqlite", path)
+	dsn := "file:" + path + "?_pragma=busy_timeout(10000)&_pragma=journal_mode(WAL)"
+	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return err
 	}

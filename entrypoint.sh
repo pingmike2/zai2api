@@ -46,31 +46,42 @@ sleep 2
 export DISPLAY=:99
 
 # 采集一批 (代理失败自动回退直连)
+# ⚠️ 加采集锁: 首次采集(后台) 和 补采循环 可能同时触发, 两个浏览器进程抢页面/写库会冲突
 collect_batch() {
   local label="$1"
+  if [ -f /tmp/collect.lock ]; then
+    echo "[collect] ⚠️ ${label}: 已有采集进程运行, 跳过本次"
+    return 1
+  fi
+  touch /tmp/collect.lock
+  local result=1
   echo "[collect] ${label}: 采集 ${BATCH} 个 deviceToken..."
   if DISPLAY=:99 /app/token-collector --count "$BATCH" --out "$DB" --headless=true 2>&1; then
     echo "[collect] ✅ ${label} 采集完成: $(count_tokens) tokens"
-    return 0
-  fi
-  if [ -n "$ZAI_PROXY" ]; then
-    echo "[collect] ⚠️ 代理采集失败, 回退直连重试..."
+    result=0
+  elif [ -n "$ZAI_PROXY" ]; then
+    echo "[collect] ⚠️ ${label}: 代理采集失败, 回退直连重试..."
     unset ZAI_PROXY HTTPS_PROXY HTTP_PROXY
     if DISPLAY=:99 /app/token-collector --count "$BATCH" --out "$DB" --headless=true 2>&1; then
-      echo "[collect] ✅ 直连采集完成: $(count_tokens) tokens"
-      return 0
+      echo "[collect] ✅ ${label}: 直连采集完成: $(count_tokens) tokens"
+      result=0
+    else
+      echo "[collect] ⚠️ ${label}: 采集失败, 稍后重试"
     fi
+  else
+    echo "[collect] ⚠️ ${label}: 采集失败, 稍后重试"
   fi
-  echo "[collect] ⚠️ 采集失败, 稍后重试"
-  return 1
+  rm -f /tmp/collect.lock
+  return $result
 }
 
-# 首次: 快速采一批让服务上线 (不阻塞)
+# 首次: 后台采集一批让服务立即上线 (不阻塞!)
 TOKENS=$(count_tokens)
 echo "[entrypoint] 当前 token 池: $TOKENS / 目标 $TARGET"
 if [ "$TOKENS" -lt "$LOWWATER" ]; then
-  echo "[entrypoint] 首次采集 (1 批, 不阻塞服务)..."
-  collect_batch "首次" || echo "[entrypoint] 首次采集未成功, 服务先启动"
+  echo "[entrypoint] 首次采集 (后台执行, 不阻塞服务)..."
+  collect_batch "首次" >/tmp/first-collect.log 2>&1 &
+  FIRST_PID=$!
 else
   echo "[entrypoint] token 池充足, 跳过首次采集"
 fi
