@@ -35,8 +35,8 @@ import (
 const (
 	maxTokens           = 1250
 	defaultTokens       = 750
-	maxRetries          = 3
-	tokenCollectTimeout = 90 * time.Second
+	maxRetries          = 5
+	tokenCollectTimeout = 150 * time.Second
 	zaiURL              = "https://chat.z.ai"
 )
 
@@ -165,7 +165,7 @@ func tryCollect(ctx context.Context, total int, outPath string) error {
 	// Wait for window.z_um.getToken to be ready — the page injects the captcha
 	// SDK async after the first send, so a fixed sleep is flaky under load.
 	fmt.Println("  Waiting for token endpoint...")
-	waitCtx, waitCancel := context.WithTimeout(ctx, 30*time.Second)
+	waitCtx, waitCancel := context.WithTimeout(ctx, 90*time.Second)
 	defer waitCancel()
 	if err := waitForZUM(waitCtx); err != nil {
 		return fmt.Errorf("token endpoint not ready: %w", err)
