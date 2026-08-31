@@ -184,7 +184,7 @@ function toggleFeat(key, el) {
   var body = {}; body[key] = !isOn;
   fetch('/features', {
     method: 'POST',
-    headers: {'Content-Type':'application/json','Authorization':'Bearer __AUTH_TOKEN__'},
+    headers: {'Content-Type':'application/json'},
     body: JSON.stringify(body)
   }).then(function(r){return r.json()}).then(function(d){
     if(d.success) refresh();

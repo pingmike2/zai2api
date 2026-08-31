@@ -245,8 +245,8 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("/models", s.withAuth(s.handleModels))
 	mux.HandleFunc("/v1/chat/completions", s.withAuth(s.handleChatCompletions))
 
-	mux.HandleFunc("/prompt", s.withAuth(s.handlePrompt))
-	mux.HandleFunc("/features", s.withAuth(s.handleFeatures))
+	mux.HandleFunc("/prompt", s.handlePrompt)
+	mux.HandleFunc("/features", s.handleFeatures)
 
 	mux.HandleFunc("/admin/stats", s.handleAdminStats)
 	mux.HandleFunc("/admin/health", s.handleAdminHealth)
@@ -273,7 +273,8 @@ func (s *Server) handleRoot(w http.ResponseWriter, r *http.Request) {
 	}
 	html := dashboardHTML
 	html = strings.ReplaceAll(html, "__HOST__", host)
-	html = strings.ReplaceAll(html, "__AUTH_TOKEN__", s.cfg.AuthToken)
+	// ⚠️ 不泄露真实 AUTH_TOKEN — dashboard 页面用占位符 (内部 fetch 端点无需鉴权)
+	html = strings.ReplaceAll(html, "__AUTH_TOKEN__", "sk-zai-••••••••")
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Write([]byte(html))
 }
