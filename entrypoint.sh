@@ -1,8 +1,8 @@
 #!/bin/bash
 # GLM-ZAI-2API 容器入口
 # 启动流程:
-#   1. 首次快速采集一批 (TOKEN_BATCH, 默认150) 让服务尽快上线
-#   2. 后台循环补采直到 token 池达到 TOKEN_TARGET (默认750), 达标停止
+#   1. 首次快速采集一批 (TOKEN_BATCH, 默认150) 后台执行, 服务立即上线
+#   2. 前台循环补采直到 token 池达到 TOKEN_TARGET (默认750), 达标后低频检查
 #   3. 达标后若池子被消耗到低水位 (< 50), 自动补一批
 #   4. 采集失败自动回退直连重试
 
@@ -46,7 +46,7 @@ sleep 2
 export DISPLAY=:99
 
 # 采集一批 (代理失败自动回退直连)
-# ⚠️ 用 flock 原子锁防并发: 首次采集(后台) 和 补采循环 同时触发时只有一个能跑
+# ⚠️ flock 原子锁防并发: 首次采集(后台) 和 补采循环 同时触发时只有一个能跑
 collect_batch() {
   local label="$1"
   # flock 非阻塞抢锁; 拿不到说明另有采集在跑
@@ -78,7 +78,6 @@ collect_batch() {
 }
 
 # 首次: 后台采集一批让服务立即上线 (不阻塞!)
-# ⚠️ 锁由 collect_batch 内部创建; 补采循环必须等首次采集建锁, 否则抢跑
 TOKENS=$(count_tokens)
 echo "[entrypoint] 当前 token 池: $TOKENS / 目标 $TARGET"
 if [ "$TOKENS" -lt "$LOWWATER" ]; then
@@ -89,26 +88,26 @@ else
   echo "[entrypoint] token 池充足, 跳过首次采集"
 fi
 
-# 后台补采循环: 池子未达 TARGET 就持续补, 达标后低频检查
-(
-  while true; do
-    T=$(count_tokens)
-    if [ "$T" -lt "$TARGET" ]; then
-      echo "[auto-collect] 池子 $T < 目标 $TARGET, 补采 1 批..."
-      collect_batch "补采"
-      sleep 60   # 未达标: 短间隔, 持续往目标爬
-    elif [ "$T" -lt "$LOWWATER" ]; then
-      echo "[auto-collect] 池子跌破低水位 ($T), 补采 1 批..."
-      collect_batch "补采"
-      sleep 60
-    else
-      sleep 600  # 达标且充足: 低频检查 (10分钟)
-    fi
-  done
-) &
-echo "[entrypoint] 后台补采循环已启动 (目标 $TARGET, 未达标每1分钟补批, 达标后10分钟检查)"
-
-# 启动主服务
+# 启动主服务 (后台)
 echo "[entrypoint] 启动 zai-server (port=${PORT:-8080})..."
 echo "[entrypoint] ZAI_TOKEN: $([ -n "$ZAI_TOKEN" ] && echo '已配置(可解锁GLM-5.2)' || echo '未配置(仅glm-4.7)')"
-exec /app/zai-server
+/app/zai-server &
+ZAI_PID=$!
+
+# 前台补采循环 (主循环, 稳定运行)
+# ⚠️ collect_batch 必须 || true — entrypoint 有 set -e, 采集失败返回1会杀掉整个循环!
+echo "[entrypoint] 补采循环已启动 (目标 $TARGET, 未达标每1分钟补批, 达标后10分钟检查)"
+while true; do
+  T=$(count_tokens)
+  if [ "$T" -lt "$TARGET" ]; then
+    echo "[auto-collect] 池子 $T < 目标 $TARGET, 补采 1 批..."
+    collect_batch "补采" || true
+    sleep 60   # 未达标: 短间隔, 持续往目标爬
+  elif [ "$T" -lt "$LOWWATER" ]; then
+    echo "[auto-collect] 池子跌破低水位 ($T), 补采 1 批..."
+    collect_batch "补采" || true
+    sleep 60
+  else
+    sleep 600  # 达标且充足: 低频检查 (10分钟)
+  fi
+done
