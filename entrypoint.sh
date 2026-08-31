@@ -3,7 +3,7 @@
 # 启动流程:
 #   1. 若 token 池不足 → 容器内跑 token-collector 采集 (同 IP, 解决 F001)
 #   2. 后台循环每 10 分钟检查 token 池, 不足 50 自动补采
-#   3. 启动 Go 服务 (采集失败也启动)
+#   3. 启动 Go 服务 (采集失败也启动, 不阻塞)
 
 set -e
 
@@ -25,30 +25,30 @@ export DISPLAY=:99
 
 # 采集函数 (供前后台共用)
 collect_once() {
-  echo "[collect] 开始采集 ${TOKEN_COUNT:-750} 个 deviceToken..."
-  if DISPLAY=:99 /app/token-collector --count "${TOKEN_COUNT:-750}" --out "$DB" --headless=true 2>&1; then
+  echo "[collect] 开始采集 ${TOKEN_COUNT:-300} 个 deviceToken..."
+  if DISPLAY=:99 /app/token-collector --count "${TOKEN_COUNT:-300}" --out "$DB" --headless=true 2>&1; then
     echo "[collect] ✅ 采集完成: $(count_tokens) tokens"
     return 0
   else
-    echo "[collect] ⚠️ 采集失败 (网络慢/验证码/被限), 稍后重试"
+    echo "[collect] ⚠️ 采集失败 (网络慢/验证码/被限), 转后台重试"
     return 1
   fi
 }
 
-# 首次采集: 池不足 50 则阻塞采集 (最多 ~10 分钟, 5 次重试)
+# 首次采集: 只阻塞试 1 次 (~5 分钟), 失败立即启动服务, 后台继续补采
 TOKENS=$(count_tokens)
 echo "[entrypoint] 当前 token 池: $TOKENS"
 if [ "$TOKENS" -lt 50 ]; then
-  echo "[entrypoint] token 池不足, 首次采集..."
-  collect_once
+  echo "[entrypoint] token 池不足, 首次采集 (1 次, 不阻塞服务)..."
+  collect_once || echo "[entrypoint] 首次采集未成功, 服务先启动"
 else
   echo "[entrypoint] token 池充足, 跳过首次采集"
 fi
 
-# 后台补采循环: 每 10 分钟检查, 不足 50 自动重采 (服务不停)
+# 后台补采循环: 每 5 分钟检查, 不足 50 自动重采 (服务不停)
 (
   while true; do
-    sleep 600
+    sleep 300
     T=$(count_tokens)
     if [ "$T" -lt 50 ]; then
       echo "[auto-collect] token 池不足 ($T), 自动补采..."
@@ -56,7 +56,7 @@ fi
     fi
   done
 ) &
-echo "[entrypoint] 后台补采循环已启动 (每 10 分钟检查)"
+echo "[entrypoint] 后台补采循环已启动 (每 5 分钟检查)"
 
 # 启动主服务
 echo "[entrypoint] 启动 zai-server (port=${PORT:-8080})..."
