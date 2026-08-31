@@ -8,6 +8,7 @@ on:
       - 'entrypoint.sh'
       - '*.go'
       - 'token-collector/**'
+      - 'token-collector-js/**'
       - 'go.mod'
       - 'go.sum'
       - '.github/workflows/docker-image.yml'
