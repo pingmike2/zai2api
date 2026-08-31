@@ -3,11 +3,9 @@ main = "worker.js"
 compatibility_date = "2026-08-01"
 
 # deviceToken 池 (采集后 bulk put)
-# npx wrangler kv namespace create ZAI_TOKENS
-# npx wrangler kv bulk put --binding=ZAI_TOKENS tokens.json
 [[kv_namespaces]]
 binding = "ZAI_TOKENS"
-id = "REPLACE_WITH_KV_NAMESPACE_ID"
+id = "3ab3591419784c808d547316919c973f"
 
 [vars]
 # 客户端访问鉴权 (可选; 不设默认放行, 公网慎用)
