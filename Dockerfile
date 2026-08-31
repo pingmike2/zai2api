@@ -2,7 +2,7 @@
 # 容器内同 IP 采集 deviceToken + 运行原版 Go 服务 (保留全部功能: dashboard/admin/tools/GLM-5.2)
 
 # ============ Stage 1: 编译 Go 二进制 ============
-FROM golang:1.24-bookworm AS builder
+FROM golang:1.26-bookworm AS builder
 WORKDIR /build
 
 # 拷贝源码
