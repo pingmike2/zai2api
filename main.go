@@ -929,7 +929,7 @@ func main() {
 	if dbPath != "" {
 		cfg.DBPath = dbPath
 	}
-	captchaVerbose = verbose
+	captchaVerbose = verbose || cfg.LogLevel == "debug"
 
 	// Open token store
 	var tokenCount int
