@@ -57,7 +57,7 @@ ENV HOST=0.0.0.0
 ENV AUTH_TOKEN=d3vin
 ENV ZAI_TOKEN=
 ENV DB_PATH=/data/tokens.sqlite
-ENV TOKEN_COUNT=750
+ENV TOKEN_COUNT=300
 ENV LOG_LEVEL=info
 
 # 持久化目录 (token 池; NF 挂 volume 到 /data)

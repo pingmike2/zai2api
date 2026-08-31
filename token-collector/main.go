@@ -36,7 +36,7 @@ const (
 	maxTokens           = 1250
 	defaultTokens       = 750
 	maxRetries          = 5
-	tokenCollectTimeout = 150 * time.Second
+	tokenCollectTimeout = 300 * time.Second
 	zaiURL              = "https://chat.z.ai"
 )
 
