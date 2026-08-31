@@ -129,9 +129,8 @@ if (!tokens.length) {
   process.exit(1);
 }
 
-// 写成 wrangler kv bulk put 格式
-const kv = {};
-tokens.forEach((t, i) => { kv[`t${i}_${t.slice(0, 8)}`] = t; });
-fs.writeFileSync(OUT, JSON.stringify(kv, null, 2));
+// 写成 wrangler kv bulk put 格式 (数组, 非对象)
+const kvArr = tokens.map((t, i) => ({ key: `t${i}_${t.slice(0, 8)}`, value: t }));
+fs.writeFileSync(OUT, JSON.stringify(kvArr, null, 2));
 console.log(`\n[collect] ✅ 采集 ${tokens.length} 个 deviceToken → ${OUT}`);
-console.log(`\n部署到 KV：\n  npx wrangler kv bulk put --binding=ZAI_TOKENS ${OUT}`);
+console.log(`\n部署到 KV：\n  npx wrangler kv bulk put --binding=ZAI_TOKENS --remote ${OUT}`);
