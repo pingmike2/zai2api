@@ -36,14 +36,22 @@ export DISPLAY=:99
 
 # 采集函数 (供前后台共用)
 collect_once() {
-  echo "[collect] 开始采集 ${TOKEN_COUNT:-300} 个 deviceToken..."
-  if DISPLAY=:99 /app/token-collector --count "${TOKEN_COUNT:-300}" --out "$DB" --headless=true 2>&1; then
+  echo "[collect] 开始采集 ${TOKEN_COUNT:-150} 个 deviceToken..."
+  if DISPLAY=:99 /app/token-collector --count "${TOKEN_COUNT:-150}" --out "$DB" --headless=true 2>&1; then
     echo "[collect] ✅ 采集完成: $(count_tokens) tokens"
     return 0
-  else
-    echo "[collect] ⚠️ 采集失败 (网络慢/验证码/被限), 转后台重试"
-    return 1
   fi
+  # 代理失败 (ERR_NO_SUPPORTED_PROXIES 等) → 回退直连重试一次
+  if [ -n "$ZAI_PROXY" ]; then
+    echo "[collect] ⚠️ 代理采集失败, 回退直连重试..."
+    unset ZAI_PROXY HTTPS_PROXY HTTP_PROXY
+    if DISPLAY=:99 /app/token-collector --count "${TOKEN_COUNT:-150}" --out "$DB" --headless=true 2>&1; then
+      echo "[collect] ✅ 直连采集完成: $(count_tokens) tokens"
+      return 0
+    fi
+  fi
+  echo "[collect] ⚠️ 采集失败 (网络慢/验证码/被限), 转后台重试"
+  return 1
 }
 
 # 首次采集: 只阻塞试 1 次 (~5 分钟), 失败立即启动服务, 后台继续补采
