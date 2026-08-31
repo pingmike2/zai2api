@@ -178,16 +178,29 @@ func tryCollect(ctx context.Context, total int, outPath string) error {
 
 	t0 := time.Now()
 
-	// Single batch JS evaluation — calls window.z_um.getToken() in a loop
+	// 并行采集 — 每批并发 batchSize 个 getToken(), 单次超时 perCallTimeout 跳过
+	// (顺序采集在 NF 慢网络上每个 token ~1s+, 300 个会超时; 并行快 15 倍)
 	jsExpr := fmt.Sprintf(`(async () => {
-		const out = new Array(%d);
-		for (let i = 0; i < %d; i++) {
-			const tok = window.z_um.getToken();
-			out[i] = (tok && typeof tok.then === 'function') ? await tok : tok;
-			if (i %% 50 === 0) await new Promise(r => setTimeout(r, 0));
+		const total = %d;
+		const batchSize = 15;
+		const perCallTimeout = 8000;
+		const out = new Array(total);
+		const withTimeout = (p) => Promise.race([
+			Promise.resolve(p),
+			new Promise(r => setTimeout(() => r(null), perCallTimeout))
+		]);
+		for (let i = 0; i < total; i += batchSize) {
+			const n = Math.min(batchSize, total - i);
+			const batch = [];
+			for (let k = 0; k < n; k++) {
+				batch.push(withTimeout(window.z_um.getToken()));
+			}
+			const results = await Promise.all(batch);
+			for (let k = 0; k < n; k++) out[i + k] = results[k];
+			await new Promise(r => setTimeout(r, 0));
 		}
 		return out;
-	})()`, total, total)
+	})()`, total)
 
 	// Use runtime.Evaluate with awaitPromise + returnByValue
 	var tokens []string
