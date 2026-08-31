@@ -46,14 +46,15 @@ sleep 2
 export DISPLAY=:99
 
 # 采集一批 (代理失败自动回退直连)
-# ⚠️ 加采集锁: 首次采集(后台) 和 补采循环 可能同时触发, 两个浏览器进程抢页面/写库会冲突
+# ⚠️ 用 flock 原子锁防并发: 首次采集(后台) 和 补采循环 同时触发时只有一个能跑
 collect_batch() {
   local label="$1"
-  if [ -f /tmp/collect.lock ]; then
+  # flock 非阻塞抢锁; 拿不到说明另有采集在跑
+  exec 9>/tmp/collect.lock
+  if ! flock -n 9; then
     echo "[collect] ⚠️ ${label}: 已有采集进程运行, 跳过本次"
     return 1
   fi
-  touch /tmp/collect.lock
   local result=1
   echo "[collect] ${label}: 采集 ${BATCH} 个 deviceToken..."
   if DISPLAY=:99 /app/token-collector --count "$BATCH" --out "$DB" --headless=true 2>&1; then
@@ -71,16 +72,18 @@ collect_batch() {
   else
     echo "[collect] ⚠️ ${label}: 采集失败, 稍后重试"
   fi
-  rm -f /tmp/collect.lock
+  flock -u 9
+  exec 9>&-
   return $result
 }
 
 # 首次: 后台采集一批让服务立即上线 (不阻塞!)
+# ⚠️ 锁由 collect_batch 内部创建; 补采循环必须等首次采集建锁, 否则抢跑
 TOKENS=$(count_tokens)
 echo "[entrypoint] 当前 token 池: $TOKENS / 目标 $TARGET"
 if [ "$TOKENS" -lt "$LOWWATER" ]; then
   echo "[entrypoint] 首次采集 (后台执行, 不阻塞服务)..."
-  collect_batch "首次" >/tmp/first-collect.log 2>&1 &
+  collect_batch "首次" 2>&1 | tee /tmp/first-collect.log &
   FIRST_PID=$!
 else
   echo "[entrypoint] token 池充足, 跳过首次采集"

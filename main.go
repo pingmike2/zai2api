@@ -300,7 +300,7 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 // handleHealthz — NF 就绪探针
 func (s *Server) handleHealthz(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
-	status := 200
+	w.WriteHeader(200) // 在 Encode 之前写, 避免 superfluous WriteHeader
 	healthy := s.zaiSession.isConnected()
 	tokenCount := 0
 	if s.tokens != nil {
@@ -314,7 +314,6 @@ func (s *Server) handleHealthz(w http.ResponseWriter, r *http.Request) {
 		"model":       "glm-4.7",
 		"authEnabled": s.cfg.AuthEnabled,
 	})
-	w.WriteHeader(status)
 }
 
 func (s *Server) handleV1Models(w http.ResponseWriter, r *http.Request) {
