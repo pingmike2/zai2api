@@ -1,20 +1,20 @@
 # zai2api
 
-Z.AI (chat.z.ai) **GLM 白嫖网关** — 容器版 (Northflank/Docker)。
+Z.AI (chat.z.ai) **GLM 白嫖网关** — VPS 部署（支持 amd64 / arm64）。
 
 基于 [D3-vin/GLM-ZAI-2API](https://github.com/D3-vin/GLM-ZAI-2API) (MIT, Go) 原版全功能移植，保留 dashboard / admin / tool-calling / 多模型支持。
 
-## 为什么是容器版
+## 为什么是 VPS 部署
 
-Z.AI 的阿里云验证码 **deviceToken 与采集环境绑定**（同 IP 才有效）。容器内**同机采集 + 同机使用**，彻底解决跨环境 F001 问题。CF Worker 无法满足此要求，故放弃。
+Z.AI 的阿里云验证码 **deviceToken 与采集环境绑定**（同 IP 才有效）。VPS 上**同机采集 + 同机使用**，彻底解决跨环境 F001 问题。
 
 ## 部署状态
 
 | 平台 | 状态 | 说明 |
 |------|------|------|
-| **VPS (dgnlinks x86_64)** | ✅ 可用 | systemd 原生部署，稳定运行 |
-| **Northflank 容器 arm64** | ❌ 失败 | 容器出口 IP 为数据中心 IP，被 z.ai 设备指纹风控拦截，deviceToken 采集失败 |
-| **arm64 本地 / 自行编译** | 🔧 可行 | 需本地 `go build` 或 `docker build`，代码开源，NF 镜像仅供参考 |
+| **VPS amd64 (dgnlinks)** | ✅ 可用 | systemd 原生部署，稳定运行 |
+| **VPS arm64** | ✅ 可用 | Docker 部署 + SOCKS5 代理绕 WAF，稳定运行 |
+| **容器部署 (Docker/Northflank)** | ⚠️ 理论支持 | 多架构镜像已推送 GHCR，但容器环境出口 IP 常被 WAF 拦截 |
 
 ## 功能
 
@@ -24,20 +24,31 @@ Z.AI 的阿里云验证码 **deviceToken 与采集环境绑定**（同 IP 才有
 - **模型**：
   - guest（无 ZAI_TOKEN）：`glm-4.7` ✅
   - 配置 `ZAI_TOKEN`（Z.AI 登录 JWT）：`GLM-5.2`、`GLM-5-Turbo`、`GLM-5v-Turbo`、`GLM-5.1` ✅
-- **自动采集 token 池**：启动时容器内采集 deviceToken（750 个/批），不足 50 自动补采
+- **自动采集 token 池**：启动时采集 deviceToken（750 个/批），不足 50 自动补采
 
 ## 镜像
 
-构建推送到 GHCR（workflow 自动）：
+多架构镜像（amd64 + arm64）推送到 GHCR（workflow 自动构建）：
 
 ```
 ghcr.io/pingmike2/zai2api:latest
 ```
 
-## Northflank 部署
+## VPS 部署
 
-1. **新建 Service** → 从 GitHub 仓库构建（zai2api 已公开）或拉取 GHCR 镜像
-2. **环境变量**：
+### Docker 部署
+
+```bash
+docker run -d --name zai2api \
+  -p 8080:8080 \
+  -e AUTH_TOKEN=your-key \
+  -e ALL_PROXY=socks5://user:pass@host:port \
+  -v zai2api-data:/data \
+  --restart unless-stopped \
+  ghcr.io/pingmike2/zai2api:latest
+```
+
+### 环境变量
 
 | 变量 | 说明 | 默认 |
 |------|------|------|
@@ -52,30 +63,18 @@ ghcr.io/pingmike2/zai2api:latest
 | `HTTPS_PROXY` | HTTPS 代理（同上） | 空 |
 | `ALL_PROXY` | 全部流量走代理（推荐设这个即可） | 空 |
 
-3. **Volume**：挂载 `/data` 持久化 token 池（否则重启后重新采集）
-4. **端口**：暴露 `8080`
-5. **Health check**：`/healthz`
-
-## 本地运行
-
-```bash
-docker build -t zai2api .
-docker run -d -p 8080:8080 \
-  -e AUTH_TOKEN=your-key \
-  -v zai2api-data:/data \
-  zai2api
-```
+> **注意**：Z.AI 会对数据中心 IP 的 chat 请求返回 WAF 405。如果你的 VPS 是 DC IP，需要配置 `ALL_PROXY` 走住宅 IP 代理。住宅 IP 的 VPS 不需要代理。
 
 ## 使用
 
 ```bash
 # 模型列表
 curl http://localhost:8080/v1/models \
-  -H "Authorization: Bearer your-key"
+  -H "Authorization: Bearer ***"
 
 # chat (流式)
 curl -N http://localhost:8080/v1/chat/completions \
-  -H "Authorization: Bearer your-key" -H "Content-Type: application/json" \
+  -H "Authorization: Bearer ***" -H "Content-Type: application/json" \
   -d '{"model":"glm-4.7","messages":[{"role":"user","content":"hi"}]}'
 
 # 状态
