@@ -16,8 +16,17 @@ RUN cd token-collector && CGO_ENABLED=0 go build -ldflags="-s -w" -o /out/token-
 
 # 下载 gost (本地 socks5 中转: 解决 Chrome 不支持带认证 socks5)
 # 把远程带认证 PROXY_URL 转成 127.0.0.1:1080 无认证端口
-RUN curl -sSL -o /tmp/gost.tar.gz \
-    https://github.com/go-gost/gost/releases/download/v3.3.0/gost_3.3.0_linux_amd64.tar.gz \
+# 按构建架构下载 (amd64 / arm64 / armv7 等)
+ARG TARGETARCH
+RUN set -eux; \
+    case "${TARGETARCH}" in \
+      arm64) GOST_ARCH="arm64" ;; \
+      arm)   GOST_ARCH="armv7" ;; \
+      amd64) GOST_ARCH="amd64" ;; \
+      *)     GOST_ARCH="${TARGETARCH}" ;; \
+    esac; \
+    curl -sSL -o /tmp/gost.tar.gz \
+        https://github.com/go-gost/gost/releases/download/v3.3.0/gost_3.3.0_linux_${GOST_ARCH}.tar.gz \
     && tar xzf /tmp/gost.tar.gz -C /tmp \
     && mv /tmp/gost /out/gost \
     && chmod +x /out/gost
