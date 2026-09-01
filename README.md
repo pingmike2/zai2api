@@ -48,6 +48,9 @@ ghcr.io/pingmike2/zai2api:latest
 | `TOKEN_TARGET` | token 池目标值（达标后停止补采） | `750` |
 | `TOKEN_LOWWATER` | 低水位（消耗到此时补采） | `50` |
 | `LOG_LEVEL` | 日志级别 | `info` |
+| `HTTP_PROXY` | HTTP 代理（socks5://user:pass@host:port） | 空 |
+| `HTTPS_PROXY` | HTTPS 代理（同上） | 空 |
+| `ALL_PROXY` | 全部流量走代理（推荐设这个即可） | 空 |
 
 3. **Volume**：挂载 `/data` 持久化 token 池（否则重启后重新采集）
 4. **端口**：暴露 `8080`
