@@ -8,6 +8,14 @@ Z.AI (chat.z.ai) **GLM 白嫖网关** — 容器版 (Northflank/Docker)。
 
 Z.AI 的阿里云验证码 **deviceToken 与采集环境绑定**（同 IP 才有效）。容器内**同机采集 + 同机使用**，彻底解决跨环境 F001 问题。CF Worker 无法满足此要求，故放弃。
 
+## 部署状态
+
+| 平台 | 状态 | 说明 |
+|------|------|------|
+| **VPS (dgnlinks x86_64)** | ✅ 可用 | systemd 原生部署，稳定运行 |
+| **Northflank 容器 arm64** | ❌ 失败 | 容器出口 IP 为数据中心 IP，被 z.ai 设备指纹风控拦截，deviceToken 采集失败 |
+| **arm64 本地 / 自行编译** | 🔧 可行 | 需本地 `go build` 或 `docker build`，代码开源，NF 镜像仅供参考 |
+
 ## 功能
 
 - **OpenAI 兼容 API**：`/v1/chat/completions`（流式/非流式）、`/v1/models`、`/v1/messages`
