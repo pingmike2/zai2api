@@ -532,6 +532,9 @@ func (s *Server) handleChatWithTools(w http.ResponseWriter, r *http.Request, req
 	// No tool calls found — return content as-is (text or raw JSON).
 	// Previously cleanFallbackContent replaced JSON with a generic message,
 	// but that hid legitimate text responses from the user.
+	// Strip any leftover framing prefix (e.g. the tool list) so the client
+	// never sees gateway-injected scaffolding in the reply.
+	content = strings.TrimSpace(stripFraming(content))
 	if req.streamEnabled() {
 		// Client expects SSE — send text as stream chunks
 		flusher, ok := w.(http.Flusher)

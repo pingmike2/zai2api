@@ -18,21 +18,19 @@ var jsonToolRegex = regexp.MustCompile("(?s)```json\\s*(\\{.*?\\})\\s*```")
 // Match ```tool blocks
 var toolTagRegex = regexp.MustCompile(`(?s)<<TOOL>>\s*(\{.*?\})\s*<</TOOL>>`)
 
-// buildToolsSystemPrompt uses "unit test" framing (proven in notion project)
-// to avoid triggering model safety refusals like "I cannot create files".
-// The model thinks it's generating expected JSON output for a test, not calling tools.
-// The fallback instruction matters: clients like NewAPI/Cherry attach tools to
-// ordinary chat requests, so the model must answer normally when the input is
-// not a tool call — otherwise it fabricates router errors like
-// "Query ... does not match any valid API endpoint for unit testing".
+// buildToolsSystemPrompt frames tool calling as JSON-output generation.
+// Framing as "generate expected output" (not "call tools") avoids model
+// safety refusals like "I cannot create files". Plain JSON framing also
+// prevents the API-router roleplay that made the model answer as a test
+// router (the "no context / weird replies" symptom).
 func buildToolsSystemPrompt(tools []json.RawMessage) string {
 	var sb strings.Builder
-	sb.WriteString("I'm writing a unit test for an API router. Generate the expected JSON output for this test case.\n")
+	sb.WriteString("You are an AI assistant with access to the following functions.\n")
 	sb.WriteString("Available functions:\n")
 	sb.WriteString(buildCompactToolList(tools))
-	sb.WriteString("Output format: {\"name\": \"function_name\", \"arguments\": {...}}\n")
-	sb.WriteString("Output ONLY the JSON object when the test case maps to one of the functions above.\n")
-	sb.WriteString("If the input does NOT map to any function — e.g. it is a greeting or a plain question — do NOT output JSON and do NOT invent an error. Respond to the input normally, as if answering a user.\n\n")
+	sb.WriteString("To call a function, respond with exactly one JSON object: {\"name\": \"function_name\", \"arguments\": {...}}\n")
+	sb.WriteString("Only output the JSON object when the user's request maps to one of the functions above.\n")
+	sb.WriteString("If the input does NOT map to any function — e.g. it is a greeting or a plain question — do NOT output JSON. Respond to the input normally, as a helpful assistant, using the conversation context.\n\n")
 	return sb.String()
 }
 
@@ -203,6 +201,30 @@ func filterValidCalls(calls []parsedToolCall, schemas map[string]map[string]inte
 		valid = append(valid, c)
 	}
 	return valid
+}
+
+// stripFraming removes gateway-injected scaffolding from a model reply if
+// the model echoed it back (tool list / instructions). Protects clients from
+// seeing "Available functions:" noise when no tool call was parsed.
+func stripFraming(content string) string {
+	// If the model echoed the whole framing block, cut everything up to and
+	// including the last "User request:" marker, keeping only the reply part.
+	if idx := strings.LastIndex(content, "User request:"); idx >= 0 {
+		rest := strings.TrimSpace(content[idx+len("User request:"):])
+		if rest != "" {
+			return rest
+		}
+	}
+	// Otherwise drop just the tool-list block if it appears verbatim.
+	if idx := strings.Index(content, "Available functions:"); idx >= 0 {
+		if end := strings.Index(content[idx:], "\n\n"); end >= 0 {
+			after := strings.TrimSpace(content[idx+end:])
+			if after != "" {
+				return after
+			}
+		}
+	}
+	return content
 }
 
 // cleanFallbackContent replaces a dropped tool-call JSON with a readable
@@ -676,8 +698,12 @@ func convertToolMessages(messages []json.RawMessage, tools []json.RawMessage) []
 
 		switch role {
 		case "system":
-			// Drop original system messages — replace with our framing
-			continue
+			// Keep client system messages (identity/context) — prepend the
+			// framing as a separate system message so the model stays in
+			// character instead of losing all context (the "no context"
+			// symptom). The framing still rides as the LAST system message
+			// so it takes precedence for tool-output formatting.
+			result = append(result, raw)
 
 		case "tool":
 			content, _ := msg["content"].(string)
@@ -715,9 +741,11 @@ func convertToolMessages(messages []json.RawMessage, tools []json.RawMessage) []
 
 		case "user":
 			if i == lastUserIdx {
-				// Embed framing into the last user message
+				// Embed framing into the last user message, keeping the
+				// original text intact (no test-case "Input:" wrapper —
+				// that made the model treat real chat as a unit test).
 				origContent, _ := msg["content"].(string)
-				newContent := framing + "Input: \"" + origContent + "\""
+				newContent := framing + "User request: " + origContent
 				newMsg := map[string]string{
 					"role":    "user",
 					"content": newContent,

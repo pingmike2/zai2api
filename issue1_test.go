@@ -51,3 +51,48 @@ func TestRepairUnescapedQuotes(t *testing.T) {
 		t.Error("repaired output should be valid JSON")
 	}
 }
+
+// Issue #1: system messages must be preserved — the old code dropped them,
+// which made the model lose all identity/context ("no context" symptom).
+func TestConvertToolMessagesKeepsSystemContext(t *testing.T) {
+	sys := json.RawMessage(`{"role":"system","content":"You are Hermes Agent, built by Nous Research."}`)
+	user := json.RawMessage(`{"role":"user","content":"你好"}`)
+	tools := []json.RawMessage{
+		json.RawMessage(`{"type":"function","function":{"name":"terminal","parameters":{"type":"object","properties":{}}}}`),
+	}
+	out := convertToolMessages([]json.RawMessage{sys, user}, tools)
+	var sysFound, userFound bool
+	for _, raw := range out {
+		var m map[string]string
+		if json.Unmarshal(raw, &m) != nil {
+			continue
+		}
+		if m["role"] == "system" && strings.Contains(m["content"], "Hermes Agent") {
+			sysFound = true
+		}
+		if m["role"] == "user" && strings.Contains(m["content"], "User request: 你好") {
+			userFound = true
+		}
+	}
+	if !sysFound {
+		t.Fatal("system message dropped — model loses identity/context")
+	}
+	if !userFound {
+		t.Fatal("user message not embedded with framing")
+	}
+}
+
+// stripFraming must not mangle a normal reply.
+func TestStripFraming(t *testing.T) {
+	cases := []struct{ in, want string }{
+		{"Available functions:\n- terminal\n\nHello there", "Hello there"},
+		{"You are an AI assistant with access to functions.\nUser request: hi", "hi"},
+		{"plain answer", "plain answer"},
+	}
+	for _, c := range cases {
+		if got := strings.TrimSpace(stripFraming(c.in)); got != c.want {
+			t.Errorf("stripFraming(%q) = %q, want %q", c.in, got, c.want)
+		}
+	}
+}
+
