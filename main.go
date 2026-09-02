@@ -188,7 +188,9 @@ type chatRequest struct {
 
 func (r *chatRequest) streamEnabled() bool {
 	if r.Stream == nil {
-		return true // default stream=true like the original
+		// OpenAI spec: stream defaults to false. Clients that omit it
+		// (NewAPI/CPA/Cherry) expect a plain JSON response, not SSE.
+		return false
 	}
 	return *r.Stream
 }
