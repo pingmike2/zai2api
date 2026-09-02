@@ -381,7 +381,70 @@ func parseEmbeddedJSON(content string) []parsedToolCall {
 	if extracted == strings.TrimSpace(content) {
 		return nil // parseDirectJSON already tried the full content
 	}
-	return parseDirectJSON(extracted)
+	if calls := parseDirectJSON(extracted); len(calls) > 0 {
+		return calls
+	}
+	// Issue #1 fix: the model often mixes narration with the JSON and leaves
+	// quotes inside argument strings unescaped (e.g. --body "## text").
+	// Attempt a lenient reparse on a quote-repaired variant.
+	repaired := repairUnescapedQuotes(extracted)
+	if repaired != extracted {
+		if calls := parseDirectJSON(repaired); len(calls) > 0 {
+			return calls
+		}
+	}
+	return nil
+}
+
+// repairUnescapedQuotes makes a best-effort fix for a JSON fragment whose
+// string values contain unescaped double quotes (a common GLM failure mode
+// when it emits e.g. {"command": "--body "hi there""}). It walks the bytes,
+// tracks string boundaries, and escapes any quote that is not a structural
+// close (followed by , } ] : or whitespace+newline). Only returns a repaired
+// string; callers must re-validate with json.Valid / Unmarshal.
+func repairUnescapedQuotes(s string) string {
+	var sb strings.Builder
+	sb.Grow(len(s) + 16)
+	inStr := false
+	escaped := false
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if !inStr {
+			sb.WriteByte(c)
+			if c == '"' {
+				inStr = true
+			}
+			continue
+		}
+		if escaped {
+			sb.WriteByte(c)
+			escaped = false
+			continue
+		}
+		if c == '\\' {
+			sb.WriteByte(c)
+			escaped = true
+			continue
+		}
+		if c == '"' {
+			// Look ahead: a structural close (followed by , ] } : or
+			// whitespace/newline then a structural char) ends the string.
+			j := i + 1
+			for j < len(s) && (s[j] == ' ' || s[j] == '	' || s[j] == '\r' || s[j] == '\n') {
+				j++
+			}
+			if j < len(s) && (s[j] == ',' || s[j] == ']' || s[j] == '}' || s[j] == ':') {
+				sb.WriteByte(c) // genuine closing quote
+				inStr = false
+				continue
+			}
+			// Otherwise it's an unescaped quote inside the string: escape it.
+			sb.WriteString(`\"`)
+			continue
+		}
+		sb.WriteByte(c)
+	}
+	return sb.String()
 }
 
 // parseMultilineJSON handles one JSON object per line
