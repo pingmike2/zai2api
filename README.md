@@ -42,7 +42,7 @@ ghcr.io/pingmike2/zai2api:latest
 docker run -d --name zai2api \
   -p 8080:8080 \
   -e AUTH_TOKEN=your-key \
-  -e ALL_PROXY=socks5://user:pass@host:port \
+  -e https_proxy=socks5://user:pass@host:port \
   -v zai2api-data:/data \
   --restart unless-stopped \
   ghcr.io/pingmike2/zai2api:latest
@@ -59,11 +59,12 @@ docker run -d --name zai2api \
 | `TOKEN_TARGET` | token 池目标值（达标后停止补采） | `750` |
 | `TOKEN_LOWWATER` | 低水位（消耗到此时补采） | `50` |
 | `LOG_LEVEL` | 日志级别 | `info` |
-| `HTTP_PROXY` | HTTP 代理（socks5://user:pass@host:port） | 空 |
-| `HTTPS_PROXY` | HTTPS 代理（同上） | 空 |
-| `ALL_PROXY` | 全部流量走代理（推荐设这个即可） | 空 |
+| `http_proxy` | HTTP 代理（如 `socks5://user:pass@host:port`） | 空 |
+| `https_proxy` | HTTPS 代理（同上，**必须设**，Z.AI 走 HTTPS） | 空 |
 
-> **注意**：Z.AI 会对数据中心 IP 的 chat 请求返回 WAF 405。如果你的 VPS 是 DC IP，需要配置 `ALL_PROXY` 走住宅 IP 代理。住宅 IP 的 VPS 不需要代理。
+> **注意**：Z.AI 会对数据中心 IP 的 chat 请求返回 WAF 405。如果你的 VPS 是 DC IP，需要配置代理走住宅 IP。住宅 IP 的 VPS 不需要代理。
+>
+> **踩坑**：Go 的 `http.ProxyFromEnvironment` **只认小写** `http_proxy` / `https_proxy`，大写 `ALL_PROXY` / `HTTP_PROXY` **不会生效**。Docker `--env-file` 不会自动转小写，必须手动写小写变量名。
 
 ## 使用
 
