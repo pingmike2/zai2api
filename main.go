@@ -443,7 +443,7 @@ func (s *Server) handleChatWithTools(w http.ResponseWriter, r *http.Request, req
 		return
 	}
 
-	content := fullContent.String()
+	content := stripReasoning(fullContent.String())
 
 	// Parse for tool calls
 	toolCalls := parseToolCalls(content, req.Tools)
@@ -637,14 +637,17 @@ func (s *Server) handleChatStream(w http.ResponseWriter, r *http.Request, prompt
 	defer cancel()
 
 	var fullContent strings.Builder
-	var sentContent strings.Builder
+	var pending strings.Builder
 
 	err := s.sendToZAI(ctx, prompt, opts, func(chunk string) {
 		fullContent.WriteString(chunk)
-		delta := fullContent.String()[sentContent.Len():]
-		if delta != "" {
-			sentContent.WriteString(delta)
-			writeSSE(newChunk(delta, model, requestID, nil))
+		pending.WriteString(chunk)
+		// Thinking-mode reasoning blocks (<details type="reasoning">) always
+		// precede the answer. Buffer until they close, then stream the rest —
+		// never emit a partial reasoning trace to the client.
+		out, holding := flushReasoningFree(&pending)
+		if !holding && out != "" {
+			writeSSE(newChunk(out, model, requestID, nil))
 		}
 	})
 
@@ -692,15 +695,17 @@ func (s *Server) handleChatNonStream(w http.ResponseWriter, r *http.Request, pro
 		return
 	}
 
+	content := stripReasoning(fullContent.String())
+
 	if persist {
 		conv.messages = append(conv.messages,
 			map[string]interface{}{"role": "user", "content": prompt},
-			map[string]interface{}{"role": "assistant", "content": fullContent.String()},
+			map[string]interface{}{"role": "assistant", "content": content},
 		)
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(newCompletion(fullContent.String(), prompt, model, requestID))
+	json.NewEncoder(w).Encode(newCompletion(content, prompt, model, requestID))
 }
 
 func (s *Server) handlePrompt(w http.ResponseWriter, r *http.Request) {

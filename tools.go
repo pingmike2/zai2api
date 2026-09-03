@@ -227,6 +227,52 @@ func stripFraming(content string) string {
 	return content
 }
 
+// reasoningBlockRegex matches Z.AI thinking-mode reasoning blocks, e.g.
+// <details type="reasoning" done="false">\n> The user said "Hi"...\n</details>
+// These are Z.AI's chain-of-thought and must not leak into chat content.
+var reasoningBlockRegex = regexp.MustCompile(`(?s)<details[^>]*type=["']reasoning["'][^>]*>.*?</details>`)
+
+// reasoningOpenTagRegex matches just the opening <details type="reasoning">
+// tag — used by flushReasoningFree to detect an in-progress reasoning block.
+var reasoningOpenTagRegex = regexp.MustCompile(`<details[^>]*type=["']reasoning["'][^>]*>`)
+
+// stripReasoning removes <details type="reasoning">...</details> blocks from
+// model output. Thinking mode is still forwarded upstream (the Z.AI request
+// keeps enable_thinking), but the reasoning trace is filtered before it
+// reaches the client — OpenAI clients expect only the final answer.
+func stripReasoning(content string) string {
+	return strings.TrimSpace(reasoningBlockRegex.ReplaceAllString(content, ""))
+}
+
+// flushReasoningFree drains a streaming buffer, emitting only reasoning-free
+// text. Reasoning blocks (<details type="reasoning">) always precede the
+// answer, and their tags can be split across SSE chunks, so the buffer holds
+// until a block closes. Returns the text to emit now and whether the buffer
+// still ends inside an unfinished reasoning block (hold, emit nothing).
+func flushReasoningFree(buf *strings.Builder) (string, bool) {
+	s := buf.String()
+	for {
+		loc := reasoningOpenTagRegex.FindStringIndex(s)
+		if loc == nil {
+			out := s
+			buf.Reset()
+			return out, false
+		}
+		rest := s[loc[1]:]
+		closeIdx := strings.Index(rest, "</details>")
+		if closeIdx < 0 {
+			return "", true // still inside reasoning — hold
+		}
+		// Remove the completed block and re-scan for another one.
+		s = s[:loc[0]] + rest[closeIdx+len("</details>"):]
+		// Reasoning blocks precede the answer — trim the whitespace/newline
+		// left after the stripped block for a clean reply.
+		if loc[0] == 0 {
+			s = strings.TrimLeft(s, " 	\r\n")
+		}
+	}
+}
+
 // cleanFallbackContent replaces a dropped tool-call JSON with a readable
 // message so the user doesn't see raw JSON in the chat. Keeps any readable
 // text the model wrote around it.

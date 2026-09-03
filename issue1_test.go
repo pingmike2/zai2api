@@ -96,3 +96,42 @@ func TestStripFraming(t *testing.T) {
 	}
 }
 
+// Thinking-mode reasoning blocks must be stripped from content (issue #1
+// follow-up: uoef reported <details type="reasoning"> leaking into replies).
+func TestStripReasoning(t *testing.T) {
+	in := "<details type=\"reasoning\" done=\"false\">\n> The user said \"Hi\" - this is a greeting.\n</details>\nHello! How can I help you today? 😊"
+	want := "Hello! How can I help you today? 😊"
+	if got := stripReasoning(in); got != want {
+		t.Errorf("stripReasoning = %q, want %q", got, want)
+	}
+}
+
+// flushReasoningFree must hold while inside an open reasoning block and only
+// emit after it closes (streaming path).
+func TestFlushReasoningFree(t *testing.T) {
+	var buf strings.Builder
+
+	// Partial opening tag — must hold.
+	buf.WriteString("<details type=\"reasoning\" done=\"false\">\n> The user")
+	if out, hold := flushReasoningFree(&buf); out != "" || !hold {
+		t.Fatalf("inside reasoning: want (\"\", hold=true), got (%q, hold=%v)", out, hold)
+	}
+	// Reasoning body continues — still hold.
+	buf.WriteString(" said \"Hi\" - greeting.\n")
+	if out, hold := flushReasoningFree(&buf); out != "" || !hold {
+		t.Fatalf("reasoning body: want hold, got %q", out)
+	}
+	// Block closes — reasoning stripped, answer emitted.
+	buf.WriteString("</details>\nHello!")
+	out, hold := flushReasoningFree(&buf)
+	if hold || out != "Hello!" {
+		t.Fatalf("after close: want (\"Hello!\", hold=false), got (%q, hold=%v)", out, hold)
+	}
+
+	// No reasoning at all — emit directly.
+	buf.WriteString("plain")
+	if out, hold := flushReasoningFree(&buf); hold || out != "plain" {
+		t.Fatalf("plain: want plain, got %q", out)
+	}
+}
+
