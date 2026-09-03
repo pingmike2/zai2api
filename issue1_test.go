@@ -135,3 +135,33 @@ func TestFlushReasoningFree(t *testing.T) {
 	}
 }
 
+// splitReasoningInline must separate reasoning blocks from visible content.
+func TestSplitReasoningInline(t *testing.T) {
+	// Whole block
+	content, reasoning := splitReasoningInline("<details type=\"reasoning\" done=\"false\">\n> think\n</details>")
+	if reasoning == "" || content != "" {
+		t.Fatalf("whole block: content=%q reasoning=%q", content, reasoning)
+	}
+	// Block + trailing answer
+	content, reasoning = splitReasoningInline("<details type=\"reasoning\">\n> think\n</details>\nAnswer here")
+	if reasoning == "" || !strings.Contains(content, "Answer here") {
+		t.Fatalf("block+answer: content=%q reasoning=%q", content, reasoning)
+	}
+	// Plain content, no reasoning
+	content, reasoning = splitReasoningInline("just text")
+	if content != "just text" || reasoning != "" {
+		t.Fatalf("plain: content=%q reasoning=%q", content, reasoning)
+	}
+}
+
+// stripReasoningTags removes wrapper tags, keeps interior reasoning text.
+func TestStripReasoningTags(t *testing.T) {
+	in := "<details type=\"reasoning\" done=\"false\">\n> The user said Hi.\n</details>"
+	got := stripReasoningTags(in)
+	if strings.Contains(got, "<details") || strings.Contains(got, "</details>") {
+		t.Fatalf("tags not stripped: %q", got)
+	}
+	if !strings.Contains(got, "The user said Hi") {
+		t.Fatalf("reasoning text lost: %q", got)
+	}
+}

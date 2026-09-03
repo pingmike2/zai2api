@@ -91,12 +91,14 @@ type Server struct {
 // ── OpenAI response types ──
 
 type openAIDelta struct {
-	Content string `json:"content"`
+	Content          string `json:"content"`
+	ReasoningContent string `json:"reasoning_content,omitempty"`
 }
 
 type openAIMessage struct {
-	Role    string `json:"role"`
-	Content string `json:"content"`
+	Role             string `json:"role"`
+	Content          string `json:"content"`
+	ReasoningContent string `json:"reasoning_content,omitempty"`
 }
 
 type openAIChoice struct {
@@ -137,9 +139,37 @@ func newChunk(content, model, requestID string, finish *string) openAIResponse {
 	}
 }
 
-func newCompletion(content, prompt, model, requestID string) openAIResponse {
+func newChunkReasoning(reasoning, model, requestID string, finish *string) openAIResponse {
+	return openAIResponse{
+		ID:      "chatcmpl-" + requestID,
+		Object:  "chat.completion.chunk",
+		Created: time.Now().Unix(),
+		Model:   model,
+		Choices: []openAIChoice{{
+			Index:        0,
+			Delta:        &openAIDelta{ReasoningContent: reasoning},
+			FinishReason: finish,
+		}},
+	}
+}
+
+func newCompletion(content, prompt, model, requestID string, usageArgs ...*openAIUsage) openAIResponse {
 	pt := estimateTokens(prompt)
 	ct := estimateTokens(content)
+	if len(usageArgs) > 0 && usageArgs[0] != nil && usageArgs[0].TotalTokens > 0 {
+		return openAIResponse{
+			ID:      "chatcmpl-" + requestID,
+			Object:  "chat.completion",
+			Created: time.Now().Unix(),
+			Model:   model,
+			Choices: []openAIChoice{{
+				Index:        0,
+				Message:      &openAIMessage{Role: "assistant", Content: content},
+				FinishReason: strPtr("stop"),
+			}},
+			Usage: usageArgs[0],
+		}
+	}
 	return openAIResponse{
 		ID:      "chatcmpl-" + requestID,
 		Object:  "chat.completion",
@@ -427,9 +457,12 @@ func (s *Server) handleChatWithTools(w http.ResponseWriter, r *http.Request, req
 	defer cancel()
 
 	var fullContent strings.Builder
+	var zaiUsage openAIUsage
 	err := s.sendToZAI(ctx, convertedPrompt, opts, func(chunk string) {
 		fullContent.WriteString(chunk)
-	})
+	}, func(u *openAIUsage) {
+		zaiUsage = *u
+	}, func(r string) {})
 
 	if err != nil {
 		log.Printf("[Tools] Error: %v", err)
@@ -474,7 +507,7 @@ func (s *Server) handleChatWithTools(w http.ResponseWriter, r *http.Request, req
 			flusher, ok := w.(http.Flusher)
 			if !ok {
 				w.Header().Set("Content-Type", "application/json")
-				writeToolCallsJSON(w, requestID, model, cleanContent, entries)
+				writeToolCallsJSON(w, requestID, model, cleanContent, entries, &zaiUsage)
 				return
 			}
 			w.Header().Set("Content-Type", "text/event-stream")
@@ -523,7 +556,7 @@ func (s *Server) handleChatWithTools(w http.ResponseWriter, r *http.Request, req
 		} else {
 			// Non-streaming JSON
 			w.Header().Set("Content-Type", "application/json")
-			writeToolCallsJSON(w, requestID, model, cleanContent, entries)
+			writeToolCallsJSON(w, requestID, model, cleanContent, entries, &zaiUsage)
 		}
 		log.Printf("[Tools] Returned %d tool calls", len(toolCalls))
 		return
@@ -540,7 +573,7 @@ func (s *Server) handleChatWithTools(w http.ResponseWriter, r *http.Request, req
 		flusher, ok := w.(http.Flusher)
 		if !ok {
 			w.Header().Set("Content-Type", "application/json")
-			json.NewEncoder(w).Encode(newCompletion(content, prompt, model, requestID))
+			json.NewEncoder(w).Encode(newCompletion(content, prompt, model, requestID, &zaiUsage))
 			return
 		}
 		w.Header().Set("Content-Type", "text/event-stream")
@@ -572,7 +605,7 @@ func (s *Server) handleChatWithTools(w http.ResponseWriter, r *http.Request, req
 	} else {
 		// Non-streaming JSON
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(newCompletion(content, prompt, model, requestID))
+		json.NewEncoder(w).Encode(newCompletion(content, prompt, model, requestID, &zaiUsage))
 	}
 	preview := content
 	if len(preview) > 500 {
@@ -582,7 +615,7 @@ func (s *Server) handleChatWithTools(w http.ResponseWriter, r *http.Request, req
 }
 
 // writeToolCallsJSON writes a non-streaming JSON response with tool_calls.
-func writeToolCallsJSON(w http.ResponseWriter, requestID, model, content string, entries interface{}) {
+func writeToolCallsJSON(w http.ResponseWriter, requestID, model, content string, entries interface{}, usage *openAIUsage) {
 	resp := map[string]interface{}{
 		"id":      "chatcmpl-" + requestID,
 		"object":  "chat.completion",
@@ -597,6 +630,9 @@ func writeToolCallsJSON(w http.ResponseWriter, requestID, model, content string,
 			},
 			"finish_reason": "tool_calls",
 		}},
+	}
+	if usage != nil && usage.TotalTokens > 0 {
+		resp["usage"] = usage
 	}
 	json.NewEncoder(w).Encode(resp)
 }
@@ -638,16 +674,30 @@ func (s *Server) handleChatStream(w http.ResponseWriter, r *http.Request, prompt
 
 	var fullContent strings.Builder
 	var pending strings.Builder
+	var zaiUsage openAIUsage
+	var reasoningPending strings.Builder
 
 	err := s.sendToZAI(ctx, prompt, opts, func(chunk string) {
 		fullContent.WriteString(chunk)
-		pending.WriteString(chunk)
 		// Thinking-mode reasoning blocks (<details type="reasoning">) always
 		// precede the answer. Buffer until they close, then stream the rest —
-		// never emit a partial reasoning trace to the client.
+		// never emit a partial reasoning trace to the client. Reasoning text
+		// collected via onReasoning is emitted as reasoning_content once the
+		// block closes (see the reasoning callback below).
+		pending.WriteString(chunk)
 		out, holding := flushReasoningFree(&pending)
 		if !holding && out != "" {
 			writeSSE(newChunk(out, model, requestID, nil))
+		}
+	}, func(u *openAIUsage) {
+		zaiUsage = *u
+	}, func(r string) {
+		reasoningPending.WriteString(stripReasoningTags(r))
+		if strings.Contains(r, "</details>") {
+			if rc := strings.TrimSpace(reasoningPending.String()); rc != "" {
+				writeSSE(newChunkReasoning(rc, model, requestID, nil))
+			}
+			reasoningPending.Reset()
 		}
 	})
 
@@ -659,6 +709,20 @@ func (s *Server) handleChatStream(w http.ResponseWriter, r *http.Request, prompt
 
 	// Final chunk
 	writeSSE(newChunk("", model, requestID, strPtr("stop")))
+	// Appended usage block (OpenAI streaming convention) so relay software can
+	// track real token cost from Z.AI.
+	if zaiUsage.TotalTokens > 0 {
+		usageChunk := map[string]interface{}{
+			"id":      "chatcmpl-" + requestID,
+			"object":  "chat.completion.chunk",
+			"created": time.Now().Unix(),
+			"model":   model,
+			"choices": []map[string]interface{}{},
+			"usage":   zaiUsage,
+		}
+		data, _ := json.Marshal(usageChunk)
+		fmt.Fprintf(w, "data: %s\n\n", data)
+	}
 	fmt.Fprintf(w, "data: [DONE]\n\n")
 	flusher.Flush()
 
@@ -679,9 +743,12 @@ func (s *Server) handleChatNonStream(w http.ResponseWriter, r *http.Request, pro
 	defer cancel()
 
 	var fullContent strings.Builder
+	var zaiUsage openAIUsage
 	err := s.sendToZAI(ctx, prompt, opts, func(chunk string) {
 		fullContent.WriteString(chunk)
-	})
+	}, func(u *openAIUsage) {
+		zaiUsage = *u
+	}, func(r string) {})
 
 	if err != nil {
 		log.Printf("[API] Error: %v", err)
@@ -705,7 +772,7 @@ func (s *Server) handleChatNonStream(w http.ResponseWriter, r *http.Request, pro
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(newCompletion(content, prompt, model, requestID))
+	json.NewEncoder(w).Encode(newCompletion(content, prompt, model, requestID, &zaiUsage))
 }
 
 func (s *Server) handlePrompt(w http.ResponseWriter, r *http.Request) {
@@ -749,7 +816,7 @@ func (s *Server) handlePrompt(w http.ResponseWriter, r *http.Request) {
 	var fullContent strings.Builder
 	err := s.sendToZAI(ctx, body.Prompt, opts, func(chunk string) {
 		fullContent.WriteString(chunk)
-	})
+	}, func(u *openAIUsage) {}, func(r string) {})
 
 	if err != nil {
 		log.Printf("[Prompt] Error: %v", err)

@@ -273,6 +273,34 @@ func flushReasoningFree(buf *strings.Builder) (string, bool) {
 	}
 }
 
+// stripReasoningTags removes the <details type="reasoning">...</details> wrapper
+// tags, keeping only the inner reasoning text (for reasoning_content).
+func stripReasoningTags(content string) string {
+	s := content
+	// Strip complete blocks, keeping the interior reasoning text.
+	for {
+		loc := reasoningBlockRegex.FindStringIndex(s)
+		if loc == nil {
+			break
+		}
+		blk := s[loc[0]:loc[1]]
+		inner := reasoningOpenTagRegex.ReplaceAllString(blk, "")
+		inner = strings.ReplaceAll(inner, "</details>", "")
+		s = s[:loc[0]] + inner + s[loc[1]:]
+	}
+	// Strip orphan open/close tags from fragments.
+	s = reasoningOpenTagRegex.ReplaceAllString(s, "")
+	s = strings.ReplaceAll(s, "</details>", "")
+	// Strip leading "> " quote markers Z.AI uses in reasoning lines.
+	lines := strings.Split(s, "\n")
+	var kept []string
+	for _, l := range lines {
+		l = strings.TrimPrefix(l, "> ")
+		kept = append(kept, l)
+	}
+	return strings.Join(kept, "\n")
+}
+
 // cleanFallbackContent replaces a dropped tool-call JSON with a readable
 // message so the user doesn't see raw JSON in the chat. Keeps any readable
 // text the model wrote around it.

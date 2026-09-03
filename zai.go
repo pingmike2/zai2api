@@ -469,7 +469,7 @@ type sendOpts struct {
 
 // sendToZAI sends a chat request to Z.AI and calls onChunk for each
 // content delta received from the SSE stream.
-func (s *Server) sendToZAI(ctx context.Context, prompt string, opts sendOpts, onChunk func(string)) error {
+func (s *Server) sendToZAI(ctx context.Context, prompt string, opts sendOpts, onChunk func(string), onUsage func(*openAIUsage), onReasoning func(string)) error {
 	if !s.zaiSession.isInitialized() {
 		if err := s.zaiSession.initialize(s.cfg.ZAIToken); err != nil {
 			return err
@@ -477,7 +477,7 @@ func (s *Server) sendToZAI(ctx context.Context, prompt string, opts sendOpts, on
 	}
 
 	for retry := 0; retry < 2; retry++ {
-		err := s.doZAIRequest(ctx, prompt, opts, onChunk)
+		err := s.doZAIRequest(ctx, prompt, opts, onChunk, onUsage, onReasoning)
 		if err == errZAIUnauthorized && retry == 0 {
 			log.Println("[ZAI] 401, re-initializing session...")
 			s.zaiSession.markUninitialized()
@@ -493,7 +493,7 @@ func (s *Server) sendToZAI(ctx context.Context, prompt string, opts sendOpts, on
 
 var errZAIUnauthorized = fmt.Errorf("zai unauthorized")
 
-func (s *Server) doZAIRequest(ctx context.Context, prompt string, opts sendOpts, onChunk func(string)) error {
+func (s *Server) doZAIRequest(ctx context.Context, prompt string, opts sendOpts, onChunk func(string), onUsage func(*openAIUsage), onReasoning func(string)) error {
 	zs := s.zaiSession
 	zs.mu.Lock()
 	token := zs.token
@@ -597,6 +597,8 @@ func (s *Server) doZAIRequest(ctx context.Context, prompt string, opts sendOpts,
 	// Parse SSE stream
 	reader := bufio.NewReaderSize(resp.Body, 256*1024)
 	var buffer string
+	var usage openAIUsage
+	var usageMu sync.Mutex
 
 	if s.cfg.LogLevel == "debug" {
 		log.Printf("[DEBUG] Z.AI response headers: %v", resp.Header)
@@ -614,8 +616,9 @@ func (s *Server) doZAIRequest(ctx context.Context, prompt string, opts sendOpts,
 				if trimmed != "" && s.cfg.LogLevel == "debug" {
 					log.Printf("[DEBUG] Z.AI SSE line: %s", trimmed)
 				}
-				if err := processSSELine(l, onChunk, s.cfg.LogLevel); err != nil {
+				if err := processSSELine(l, onChunk, s.cfg.LogLevel, &usage, &usageMu, onReasoning); err != nil {
 					if err == io.EOF {
+						onUsage(&usage)
 						return nil // [DONE] — normal end
 					}
 					return err // actual error from Z.AI
@@ -629,8 +632,9 @@ func (s *Server) doZAIRequest(ctx context.Context, prompt string, opts sendOpts,
 					if s.cfg.LogLevel == "debug" {
 						log.Printf("[DEBUG] Z.AI SSE line (final): %s", strings.TrimSpace(buffer))
 					}
-					processSSELine(buffer, onChunk, s.cfg.LogLevel)
+					processSSELine(buffer, onChunk, s.cfg.LogLevel, &usage, &usageMu, onReasoning)
 				}
+				onUsage(&usage)
 			}
 			break
 		}
@@ -641,7 +645,9 @@ func (s *Server) doZAIRequest(ctx context.Context, prompt string, opts sendOpts,
 
 // processSSELine parses a single SSE data line and calls onChunk.
 // Returns io.EOF to signal [DONE], or a non-nil error if Z.AI reports an error.
-func processSSELine(line string, onChunk func(string), logLevel string) error {
+// Captures Z.AI's real token usage into usage (thread-safe via mutex) and a
+// reasoning-content accumulator if a <details type="reasoning"> block is open.
+func processSSELine(line string, onChunk func(string), logLevel string, usage *openAIUsage, mu *sync.Mutex, onReasoning func(string)) error {
 	trimmed := strings.TrimSpace(line)
 	if trimmed == "" || !strings.HasPrefix(trimmed, "data: ") {
 		return nil
@@ -676,6 +682,20 @@ func processSSELine(line string, onChunk func(string), logLevel string) error {
 	// Extract content delta
 	var chunk string
 	if data, ok := json_["data"].(map[string]interface{}); ok {
+		// Capture real token usage from Z.AI (phase "other" carries it).
+		if u, ok := data["usage"].(map[string]interface{}); ok && usage != nil {
+			mu.Lock()
+			if p, ok := u["prompt_tokens"].(float64); ok {
+				usage.PromptTokens = int(p)
+			}
+			if c, ok := u["completion_tokens"].(float64); ok {
+				usage.CompletionTokens = int(c)
+			}
+			if t, ok := u["total_tokens"].(float64); ok {
+				usage.TotalTokens = int(t)
+			}
+			mu.Unlock()
+		}
 		if delta, ok := data["delta_content"].(string); ok {
 			chunk = delta
 		}
@@ -699,9 +719,57 @@ func processSSELine(line string, onChunk func(string), logLevel string) error {
 	}
 
 	if chunk != "" {
-		onChunk(chunk)
+		// Separate thinking-mode reasoning blocks (<details type="reasoning">)
+		// from visible content. Reasoning text routes to onReasoning, the rest
+		// to onChunk — the client gets content only, optionally with
+		// reasoning_content populated.
+		sepContent, reasoning := splitReasoningInline(chunk)
+		if reasoning != "" && onReasoning != nil {
+			onReasoning(reasoning)
+		}
+		if sepContent != "" {
+			onChunk(sepContent)
+		}
 	}
 	return nil
+}
+
+// splitReasoningInline partitions a content delta into visible text and any
+// reasoning-block text it contains. A delta can hold a complete or partial
+// <details type="reasoning"> block, or trailing text after one. Reasoning
+// block boundaries are preserved as separate deltas here; the streaming
+// consumers hold partial blocks until they close (see flushReasoningFree).
+func splitReasoningInline(s string) (content, reasoning string) {
+	// If the delta contains a reasoning block, capture the block's interior as
+	// reasoning and return only the surrounding content as visible.
+	if loc := reasoningBlockRegex.FindStringIndex(s); loc != nil {
+		blk := s[loc[0]:loc[1]]
+		inner := reasoningOpenTagRegex.ReplaceAllString(blk, "")
+		inner = strings.ReplaceAll(inner, "</details>", "")
+		content = s[:loc[0]] + s[loc[1]:]
+		return content, inner
+	}
+	// Opening tag without close (block split across chunks): the whole delta
+	// (or the part from the tag on) is reasoning.
+	if loc := reasoningOpenTagRegex.FindStringIndex(s); loc != nil {
+		if !strings.Contains(s, "</details>") {
+			content = s[:loc[0]]
+			reasoning = reasoningOpenTagRegex.ReplaceAllString(s[loc[0]:], "")
+			if strings.HasSuffix(s, "</details>") {
+				reasoning = strings.TrimSuffix(reasoning, "</details>")
+			}
+			return content, reasoning
+		}
+	}
+	// Closing a block that started in an earlier delta.
+	if strings.Contains(s, "</details>") {
+		idx := strings.Index(s, "</details>")
+		reasoning = s[:idx]
+		content = s[idx+len("</details>"):]
+		return content, reasoning
+	}
+	// No reasoning — all content.
+	return s, ""
 }
 
 // ── Accessors ──
